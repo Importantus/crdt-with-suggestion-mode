@@ -187,7 +187,7 @@ export class TrackChanges
     this.suggestionList = new LocalList(this.text.totalOrder);
 
     this.suggestionLog.on("Add", (e) =>
-      this.addSuggestionLocally(e.suggestion, e.meta)
+      this.onSuggestionLogAdd(e.suggestion, e.meta)
     );
 
     this.text.on("Insert", (e) => {
@@ -211,329 +211,321 @@ export class TrackChanges
   }
 
   /**
-   * This is the "add" event handler of this.suggestionLog.
-   * Whenever a new suggestion is created locally or by other clients, the
-   * suggestionlog add event is triggered and must be handled by us to update our
-   * local view of these suggestions.
-   * Also emits suggestion events for changed ranges.
-   * @param suggestion
-   * @param meta
+   * Event handler for the suggestionLog's "Add" event. Orchestrates the
+   * processing of a new suggestion.
    */
-  private addSuggestionLocally(suggestion: Suggestion, meta: UpdateMeta) {
-    // ---- Step 1: Update local view and collect atomic change informations ----
+  private onSuggestionLogAdd(suggestion: Suggestion, meta: UpdateMeta) {
+    this.processSuggestion(suggestion, meta);
+  }
 
-    // Create data points at the start and end
+  /**
+   * Processes a new suggestion by updating the local state and emitting corresponding events.
+   * This is the main orchestration method.
+   *
+   * @param suggestion The new suggestion to process.
+   * @param meta The update metadata.
+   */
+  private processSuggestion(suggestion: Suggestion, meta: UpdateMeta) {
+    // ---- Step 1: Prepare local state (create data points at the start and end) ----
     this.createDataPoint(suggestion.startPosition);
     if (suggestion.endPosition) this.createDataPoint(suggestion.endPosition);
 
-    // All actual changes needed for the UI events
-    // e.g. if a char is normal text(no suggestion) and is
-    // inbetween a suggestion-decline range, there is no change
-    // on this particular character and thus it should not be included in
-    // an UI event
-    const formatChanges: FormatChangeInfo[] = [];
-    const suggestionAdditionChanges: SuggestionAdditionInfo[] = [];
-    const suggestionRemovalChanges: SuggestionRemoveInfo[] = [];
-
-    // The indices of the beginning and end of the range
-    const startDataIndex = this.suggestionList.indexOfPosition(
+    const startIndex = this.suggestionList.indexOfPosition(
       suggestion.startPosition
     );
-    const endDataIndex =
+    const endIndex =
       suggestion.endPosition === null
-        ? this.suggestionList.length
+        ? this.suggestionList.length - 1
         : this.suggestionList.indexOfPosition(suggestion.endPosition);
+
+    // ---- Step 2: Iterate over the affected range and collect changes ----
+
+    // The collected changes. This includes
+    //
+    // - the actual changes of formatting (e.g. if a char is normal text(no suggestion) and is
+    // inbetween a suggestion-decline range, there is no change
+    // on this particular character and thus it should not be included in
+    // an UI event)
+    //
+    // - the addition of suggestions
+    //
+    // - the ui-relevant removal of suggestions (i.e. if a range grows, it is
+    // replaced with bigger ranges instead of actually mutated the old range is kept.
+    // But this is not relevant to the ui, the change relevant for the ui is, that
+    // the shorter range is removed and the longer range is inserted.)
+    const changes: AggregatedChange[] = [];
+    // Actions that have to be performed due to applying a suggestion. E.g. deleting
+    // characters that were in a deletion range.
+    const actionsToPerform: TextAction[] = [];
 
     // Go trough all datapoints in the given range and add the new suggestion.
     // If there are existing suggestions that are mutually exclusive with the
     // new suggestion (i.e. addition with a corresponding removal), remove
     // them, and discard the suggestion
-    for (let i = startDataIndex; i <= endDataIndex; i++) {
+    for (let i = startIndex; i <= endIndex; i++) {
       const position = this.suggestionList.getPosition(i);
-      const data = this.suggestionList.getByPosition(position);
+      const data = this.suggestionList.getByPosition(position)!;
+      const isEnd = i === endIndex;
 
-      if (!data) continue;
+      const change = this.updateDataPointAndCollectChanges(
+        data,
+        suggestion,
+        isEnd
+      );
 
-      // Get all suggestions that correspond to the new suggestion
-      const correspondingSuggestions = data
-        // Get all suggestions with the same type as the new suggestion (e.g. all comments or all suggestions)
-        .get(suggestion.type)
-        // Get all suggestions with the other action (e.g. addition -> removal)
-        ?.filter((s) => suggestion.action !== s.action)
-        // Get only suggestions that reference the new action or are referenced by it
-        // (e.g. the acceptance of a suggestion only removes the suggestion that it references)
-        ?.filter(
-          (s) =>
-            s.dependentOn === suggestion.id || suggestion.dependentOn === s.id
-        );
-
-      // If there are no corresponding suggestions, just insert the new suggestion
-      if (!correspondingSuggestions || correspondingSuggestions.length === 0) {
-        data.set(suggestion.type, [
-          ...(data.get(suggestion.type) || []),
-          {
-            ...suggestion,
-            endingHere: i === endDataIndex,
-          },
-        ]);
-
-        // If it is not the ending of the range, or the range is inclusive, generate a
-        // change, else the end is not formatted, and thus, nothing changes.
-        if (suggestion.endClosed || i === endDataIndex) {
-          const existingChanges = data
-            .get(suggestion.type)
-            ?.filter(
-              (s) =>
-                s.userId === suggestion.userId &&
-                s.description === suggestion.description
-            );
-          const replacingExistingChange =
-            existingChanges && existingChanges?.length > 0;
-
-          suggestionAdditionChanges.push({
-            replacement: replacingExistingChange
-              ? existingChanges[existingChanges.length - 1].id
-              : undefined, // This is not commutative, it should be the longest existing range. But that would be to expensive to calculate each time
-            new: suggestion,
-          });
-
-          // Only generate a format change if there is no existing change with the
-          // same description from the same user
-          if (!replacingExistingChange) {
-            formatChanges.push({
-              previousValue: undefined,
-              newSuggestion: suggestion,
-              position: position,
-            });
-          } else {
-            suggestionRemovalChanges.push({
-              reason: SuggestionRemovalReason.REPLACED,
-              prev: existingChanges[existingChanges.length - 1],
-            });
-          }
+      if (change) {
+        changes.push({ ...change, position });
+        if (change.textAction) {
+          actionsToPerform.push(change.textAction);
         }
-      } else {
-        // If there are corresponding suggestions, remove them if the new suggestion wins over them.
-        // The new suggestion doesn't need to be added, tho, because it "was used" already to
-        // discard these old suggestions.
-        correspondingSuggestions
-          ?.filter(
-            (s) =>
-              (suggestion.action === SuggestionAction.REMOVAL &&
-                this.wins(suggestion, s)) ||
-              (s.action === SuggestionAction.REMOVAL &&
-                this.wins(s, suggestion))
-          )
-          ?.forEach((s) => {
-            // Remove the suggestion from the local view
-            data.set(
-              suggestion.type,
-              (data.get(suggestion.type) || []).filter((sug) => s !== sug)
-            );
-
-            // Getting the suggestion that is responsible for the
-            // removal. Due to the commutative nature, this can be the
-            // existing or the new suggestion
-            const removalSuggestion =
-              s.action === SuggestionAction.REMOVAL ? s : suggestion;
-
-            suggestionRemovalChanges.push({
-              reason:
-                removalSuggestion.description ===
-                SuggestionDescription.DECLINE_SUGGESTION
-                  ? SuggestionRemovalReason.DECLINED
-                  : SuggestionRemovalReason.ACCEPTED,
-              prev: s,
-            });
-
-            // If the suggestion that gets removed was an addition, then generate a change.
-            // If it is a removal, nothing changes, so no change is needed.
-            if (
-              s.action === SuggestionAction.ADDITION &&
-              (suggestion.endClosed || i === endDataIndex)
-            ) {
-              formatChanges.push({
-                position: position,
-                previousValue: s,
-                newSuggestion: undefined,
-              });
-
-              // When the removed suggestion was a deletion and the
-              // new suggestion is a accept suggestion (or the other way around),
-              // then delete the chars in the range
-              // TODO: It feels a bit hacky, to do that here, is there maybe
-              // a better way to apply actions to the text?
-              if (
-                (s.description === SuggestionDescription.DELETE_SUGGESTION &&
-                  suggestion.description ===
-                    SuggestionDescription.ACCEPT_SUGGESTION) ||
-                (suggestion.description ===
-                  SuggestionDescription.DELETE_SUGGESTION &&
-                  s.description === SuggestionDescription.ACCEPT_SUGGESTION)
-              ) {
-                const acceptSuggestion =
-                  s.description === SuggestionDescription.ACCEPT_SUGGESTION
-                    ? s
-                    : suggestion;
-
-                const startIndex = this.text.indexOfPosition(
-                  acceptSuggestion.startPosition
-                );
-                const endIndex = acceptSuggestion.endPosition
-                  ? this.text.indexOfPosition(acceptSuggestion.endPosition)
-                  : this.text.length;
-
-                this.text.delete(startIndex, endIndex - startIndex);
-              }
-            }
-          });
       }
     }
 
-    // ---- Step 2: Generate events from the collected changes ----
-    this.emitFormatEvents(formatChanges, suggestion, meta);
-    this.emitSuggestionRemoveEvents(suggestionRemovalChanges, suggestion, meta);
-    this.emitSuggestionAdditionEvents(suggestionAdditionChanges, meta);
+    // ---- Step 3: Emit events based on the collected changes ----
+    if (changes.length > 0) {
+      this.emitEventsFromChanges(changes, suggestion.userId, meta);
+    }
+
+    // ---- Step 4: Perform side-effects like text deletion ----
+    for (const action of actionsToPerform) {
+      if (action.type === "delete") {
+        const start = this.text.indexOfPosition(action.startPosition);
+        const end = action.endPosition
+          ? this.text.indexOfPosition(action.endPosition)
+          : this.text.length;
+        this.text.delete(start, end - start);
+      }
+    }
   }
 
   /**
-   * Processes a sequence of change entries and emits UI-friendly events.
+   * The core logic for a single data point. It mutates the data point
+   * and returns a summary of what changed.
    *
-   * - Filters out duplicates
-   * @param changes
-   * @param meta
+   * @param data The SuggestionDataPoint to update.
+   * @param newSuggestion The suggestion causing the change.
+   * @param isEnd Whether this is the last data point in the range.
+   * @returns An object summarizing the changes, or null if no change occurred.
    */
-  private emitSuggestionAdditionEvents(
-    changes: SuggestionAdditionInfo[],
-    meta: UpdateMeta
-  ) {
-    const map = new Map();
-    for (const item of changes) {
-      map.set(item.new.id, item);
-    }
-    const changesWithoutDuplicates: SuggestionAdditionInfo[] = Array.from(
-      map.values()
+  private updateDataPointAndCollectChanges(
+    data: SuggestionDataPoint,
+    newSuggestion: Suggestion,
+    isEnd: boolean
+  ): Omit<AggregatedChange, "position"> | null {
+    // All suggestions of the same type as the new suggestion on that position
+    const suggestionsOfType = data.get(newSuggestion.type) || [];
+
+    const removedSuggestions: SuggestionRemoveInfo[] = [];
+    let addedSuggestion: SuggestionAdditionInfo | null = null;
+
+    let textAction: TextAction | null = null;
+    let oldFormat: Suggestion | undefined = undefined;
+    let newFormat: Suggestion | undefined = undefined;
+
+    const corresponding = suggestionsOfType.find(
+      (s) =>
+        // Get all suggestions with the other action (e.g. addition -> removal)
+        newSuggestion.action !== s.action &&
+        // Get only suggestions that reference the new action or are referenced by it
+        // (e.g. the acceptance of a suggestion only removes the suggestion that it references)
+        (s.dependentOn === newSuggestion.id ||
+          newSuggestion.dependentOn === s.id)
     );
 
-    for (const change of changesWithoutDuplicates) {
-      const startIndex = this.text.indexOfPosition(change.new.startPosition);
-      const endIndex = change.new.endPosition
-        ? this.text.indexOfPosition(change.new.endPosition)
-        : this.text.length - 1;
-      this.emit("SuggestionAdded", {
-        meta: meta,
-        startIndex: startIndex,
-        endIndex: endIndex,
-        replacement: change.replacement,
-        suggestion: change.new,
-      });
+    if (!corresponding) {
+      // Case 1: No direct interaction between existing and new suggestion, the new suggestion is added.
+      // Check if it replaces an existing suggestion (e.g., growing a delete range).
+      const existing = suggestionsOfType.find(
+        (s) =>
+          s.userId === newSuggestion.userId &&
+          s.description === newSuggestion.description
+      ); // This is not commutative, it should be the longest existing range instead of the first. But that would be to expensive to calculate each time, so I hope it works like that too
+
+      const replacementId = existing ? existing.id : undefined;
+      if (existing) {
+        removedSuggestions.push(
+          ...suggestionsOfType
+            .filter(
+              (s) =>
+                s.userId === newSuggestion.userId &&
+                s.description === newSuggestion.description
+            )
+            .map((s) => ({
+              prev: s,
+              reason: SuggestionRemovalReason.REPLACED,
+            }))
+        );
+      }
+
+      data.set(newSuggestion.type, [
+        ...suggestionsOfType.filter((s) => s !== existing),
+        { ...newSuggestion, endingHere: isEnd },
+      ]);
+
+      addedSuggestion = { new: newSuggestion, replacement: replacementId };
+
+      // A format change only occurs if the range is affected and it wasn't
+      // just a replacement of a visually identical suggestion.
+      if (!existing && (newSuggestion.endClosed || !isEnd)) {
+        oldFormat = undefined;
+        newFormat = newSuggestion;
+      }
+    } else {
+      // Case 2: Interaction detected (e.g., accept/decline).
+      const removalSuggestion =
+        newSuggestion.action === SuggestionAction.REMOVAL
+          ? newSuggestion
+          : corresponding;
+      const otherSuggestion =
+        newSuggestion === removalSuggestion ? corresponding : newSuggestion;
+
+      if (this.wins(removalSuggestion, otherSuggestion)) {
+        // The removal wins, so the `otherSuggestion` (which is an ADDITION) is removed.
+        data.set(
+          newSuggestion.type,
+          suggestionsOfType.filter((s) => s.id !== corresponding.id)
+        );
+
+        const reason =
+          removalSuggestion.description ===
+          SuggestionDescription.DECLINE_SUGGESTION
+            ? SuggestionRemovalReason.DECLINED
+            : SuggestionRemovalReason.ACCEPTED;
+        removedSuggestions.push({ prev: corresponding, reason });
+
+        // A format change occurs if the removed suggestion was affecting the format.
+        if (corresponding.action === SuggestionAction.ADDITION) {
+          oldFormat = corresponding;
+          newFormat = undefined;
+        }
+
+        // Check for text-deleting side-effects.
+        if (
+          reason === SuggestionRemovalReason.ACCEPTED &&
+          corresponding.description === SuggestionDescription.DELETE_SUGGESTION
+        ) {
+          textAction = {
+            type: "delete",
+            startPosition: corresponding.startPosition,
+            endPosition: corresponding.endPosition,
+          };
+        }
+      }
     }
-  }
 
-  /**
-   * Processes a sequence of change entries and emits UI-friendly events.
-   *
-   * - Filters out duplicates
-   * @param changes
-   * @param suggestion
-   * @param meta
-   */
-  private emitSuggestionRemoveEvents(
-    changes: SuggestionRemoveInfo[],
-    suggestion: Suggestion,
-    meta: UpdateMeta
-  ) {
-    const map = new Map();
-    for (const item of changes) {
-      map.set(item.prev.id, item);
+    if (removedSuggestions.length === 0 && !addedSuggestion) {
+      return null;
     }
-    const changesWithoutDuplicates: SuggestionRemoveInfo[] = Array.from(
-      map.values()
-    );
 
-    for (const change of changesWithoutDuplicates) {
-      this.emit("SuggestionRemoved", {
-        meta: meta,
-        reason: change.reason,
-        suggestion: change.prev,
-        author: suggestion.userId,
-      });
-    }
-  }
-
-  /**
-   * Processes a sequence of change entries and emits UI-friendly format events.
-   *
-   * - Converts document positions to character indices once per change.
-   * - Merges consecutive changes sharing the same Lamport timestamp, sender ID,
-   *   and contiguous indices into a single event.
-   * - Emits a TrackChangesSuggestionsEvent for each combined change range.
-   *
-   * @param changes   Array of ChangeInfo objects describing individual edits.
-   * @param suggestion  The Suggestion object representing the new suggestion state.
-   * @param meta      Metadata about the update.
-   */
-  private emitFormatEvents(
-    changes: FormatChangeInfo[],
-    suggestion: Suggestion,
-    meta: UpdateMeta
-  ) {
-    if (!changes.length) return;
-
-    // Precompute indices to avoid repeated position lookups
-    type ChangeWithIndex = { info: FormatChangeInfo; index: number };
-    const enriched: ChangeWithIndex[] = changes.map((c) => ({
-      info: c,
-      index: this.text.indexOfPosition(c.position),
-    }));
-
-    // Helper to compare two suggestions by Lamport and senderID
-    const isSameSuggestion = (a?: Suggestion, b?: Suggestion) => {
-      if ((!a && b) || (!b && a)) return false;
-      return (!a && !b) || a?.id === b?.id;
+    return {
+      removedSuggestions,
+      addedSuggestion,
+      oldFormat,
+      newFormat,
+      textAction,
     };
+  }
 
-    // Group consecutive enriched entries with identical suggestion identity and contiguous indices
-    const groups: ChangeWithIndex[][] = [];
-    let currentGroup: ChangeWithIndex[] = [enriched[0]];
+  /**
+   * Takes a list of granular changes and emits the required, user-facing events.
+   * This method handles coalescing of format changes and deduplication of other events.
+   *
+   * @param changes A list of all changes that occurred.
+   * @param author The author of the top-level change.
+   * @param meta The update metadata.
+   */
+  private emitEventsFromChanges(
+    changes: AggregatedChange[],
+    author: string,
+    meta: UpdateMeta
+  ) {
+    // --- 1. Emit SuggestionAdded and SuggestionRemoved events (deduplicated) ---
+    const addedMap = new Map<SuggestionId, SuggestionAdditionInfo>();
+    const removedMap = new Map<SuggestionId, SuggestionRemoveInfo>();
 
-    for (let i = 1; i < enriched.length; i++) {
-      const prev = enriched[i - 1];
-      const curr = enriched[i];
-      const sameSuggestion =
-        isSameSuggestion(prev.info.previousValue, curr.info.previousValue) &&
-        isSameSuggestion(prev.info.newSuggestion, curr.info.newSuggestion);
-      const contiguous = curr.index === prev.index + 1;
+    for (const change of changes) {
+      if (change.addedSuggestion) {
+        addedMap.set(change.addedSuggestion.new.id, change.addedSuggestion);
+      }
+      for (const removed of change.removedSuggestions) {
+        removedMap.set(removed.prev.id, removed);
+      }
+    }
 
-      if (sameSuggestion && contiguous) {
+    for (const added of addedMap.values()) {
+      const startIndex = this.text.indexOfPosition(added.new.startPosition);
+      const endIndex = added.new.endPosition
+        ? this.text.indexOfPosition(added.new.endPosition)
+        : this.text.length; // Correctly handle open-ended ranges
+
+      this.emit("SuggestionAdded", {
+        meta,
+        startIndex,
+        endIndex,
+        replacement: added.replacement,
+        suggestion: added.new,
+      });
+    }
+
+    for (const removed of removedMap.values()) {
+      this.emit("SuggestionRemoved", {
+        meta,
+        author,
+        reason: removed.reason,
+        suggestion: removed.prev,
+      });
+    }
+
+    // --- 2. Emit FormatChange events (coalesced) ---
+    const formatChanges = changes
+      .filter((c) => c.oldFormat !== undefined || c.newFormat !== undefined)
+      .map((c) => ({
+        index: this.text.indexOfPosition(c.position),
+        oldSuggestion: c.oldFormat,
+        newSuggestion: c.newFormat,
+      }))
+      .sort((a, b) => a.index - b.index);
+
+    if (formatChanges.length === 0) return;
+
+    let currentGroup = [formatChanges[0]];
+    for (let i = 1; i < formatChanges.length; i++) {
+      const prev = formatChanges[i - 1];
+      const curr = formatChanges[i];
+      const isContiguous = curr.index === prev.index + 1;
+      const isSameChange =
+        curr.oldSuggestion?.id === prev.oldSuggestion?.id &&
+        curr.newSuggestion?.id === prev.newSuggestion?.id;
+
+      if (isContiguous && isSameChange) {
         currentGroup.push(curr);
       } else {
-        groups.push(currentGroup);
+        // Emit for the completed group
+        const first = currentGroup[0];
+        const last = currentGroup[currentGroup.length - 1];
+        this.emit("FormatChange", {
+          startIndex: first.index,
+          endIndex: last.index, // TODO check if inclusive ending behaves always correct
+          author,
+          oldSuggestion: first.oldSuggestion,
+          newSuggestion: first.newSuggestion,
+          meta,
+        });
+        // Start a new group
         currentGroup = [curr];
       }
     }
-    groups.push(currentGroup);
-
-    // Emit an event per group
-    for (const group of groups) {
-      const first = group[0];
-      const last = group[group.length - 1];
-
-      const startIndex = first.index;
-      const endIndex = last.index;
-      const author = suggestion.userId;
-
-      const event: TrackChangesFormatEvent = {
-        startIndex,
-        endIndex,
-        author,
-        oldSuggestion: first.info.previousValue,
-        newSuggestion: first.info.newSuggestion,
-        meta,
-      };
-
-      this.emit("FormatChange", event);
-    }
+    // Emit the last group
+    const first = currentGroup[0];
+    const last = currentGroup[currentGroup.length - 1];
+    this.emit("FormatChange", {
+      startIndex: first.index,
+      endIndex: last.index, // TODO check if inclusive ending behaves always correct
+      author,
+      oldSuggestion: first.oldSuggestion,
+      newSuggestion: first.newSuggestion,
+      meta,
+    });
   }
 
   /**
@@ -843,16 +835,6 @@ interface TextAction {
   type: "delete";
   startPosition: Position;
   endPosition: Position | null;
-}
-
-/**
- * Internally used representation of a change
- * that influences the formatting of a text range
- */
-interface FormatChangeInfo {
-  position: Position;
-  previousValue: Suggestion | undefined;
-  newSuggestion: Suggestion | undefined;
 }
 
 /**

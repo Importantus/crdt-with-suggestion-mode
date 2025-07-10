@@ -210,6 +210,10 @@ export class TrackChanges
     });
   }
 
+  get length(): number {
+    return this.text.length;
+  }
+
   /**
    * Event handler for the suggestionLog's "Add" event. Orchestrates the
    * processing of a new suggestion.
@@ -808,7 +812,110 @@ export class TrackChanges
     });
   }
 
-  acceptSuggestion() {}
+  // TODO: Index is only needed for performance reasons. Maybe find a better approach?
+  acceptSuggestion(index: number, id: SuggestionId) {
+    const position = this.text.getPosition(index);
+    const data = this.suggestionList.getByPosition(position);
+
+    const existing = Array.from(data?.values() || [])
+      .flat()
+      .find((s) => s.id === id);
+
+    if (!existing) {
+      throw new Error("No suggestion with this id at this position found.");
+    }
+
+    this.suggestionLog.add({
+      type: SuggestionType.SUGGESTION,
+      action: SuggestionAction.REMOVAL,
+      description: SuggestionDescription.ACCEPT_SUGGESTION,
+      endClosed: existing.endClosed,
+      userId: this.userId,
+      dependentOn: existing.id,
+      startPosition: existing.startPosition,
+      endPosition: existing.endPosition,
+    });
+  }
+
+  declineSuggestion(index: number, id: SuggestionId) {
+    const position = this.text.getPosition(index);
+    const data = this.suggestionList.getByPosition(position);
+
+    const existing = Array.from(data?.values() || [])
+      .flat()
+      .find((s) => s.id === id);
+
+    if (!existing) {
+      throw new Error("No suggestion with this id at this position found.");
+    }
+
+    this.suggestionLog.add({
+      type: SuggestionType.SUGGESTION,
+      action: SuggestionAction.REMOVAL,
+      description: SuggestionDescription.DECLINE_SUGGESTION,
+      endClosed: existing.endClosed,
+      userId: this.userId,
+      dependentOn: existing.id,
+      startPosition: existing.startPosition,
+      endPosition: existing.endPosition,
+    });
+  }
+
+  addComment(startIndex: number, endIndex: number, comment: string) {
+    if (startIndex < 0 || startIndex >= this.length) {
+      throw new Error(
+        `startIndex out of bounds: ${startIndex} (length: ${this.length})`
+      );
+    }
+    if (endIndex < 0 || endIndex > this.length) {
+      throw new Error(
+        `endIndex out of bound: ${endIndex} (length: ${this.length})`
+      );
+    }
+    if (endIndex < startIndex) {
+      throw new Error(
+        `endIndex ${endIndex} is less than startIndex ${startIndex}`
+      );
+    }
+    if (endIndex === startIndex) {
+      // Trivial span.
+      return;
+    }
+
+    this.suggestionLog.add({
+      type: SuggestionType.COMMENT,
+      action: SuggestionAction.ADDITION,
+      description: SuggestionDescription.ADD_COMMENT,
+      endClosed: false,
+      userId: this.userId,
+      startPosition: this.text.getPosition(startIndex),
+      endPosition: this.text.getPosition(endIndex),
+      value: comment,
+    });
+  }
+
+  removeComment(index: number, id: SuggestionId) {
+    const position = this.text.getPosition(index);
+    const data = this.suggestionList.getByPosition(position);
+
+    const existing = Array.from(data?.values() || [])
+      .flat()
+      .find((s) => s.id === id);
+
+    if (!existing) {
+      throw new Error("No comment with this id at this position found.");
+    }
+
+    this.suggestionLog.add({
+      type: SuggestionType.COMMENT,
+      action: SuggestionAction.REMOVAL,
+      description: SuggestionDescription.REMOVE_COMMENT,
+      endClosed: false,
+      userId: this.userId,
+      startPosition: existing.startPosition,
+      endPosition: existing.endPosition,
+    });
+  }
 }
 
 /**

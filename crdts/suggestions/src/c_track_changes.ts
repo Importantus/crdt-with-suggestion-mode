@@ -2,6 +2,7 @@ import {
   CObject,
   CollabEvent,
   CollabEventsRecord,
+  CTotalOrder,
   CValueList,
   ICursorList,
   InitToken,
@@ -915,6 +916,99 @@ export class TrackChanges
       startPosition: existing.startPosition,
       endPosition: existing.endPosition,
     });
+  }
+
+  /**
+   * Returns a section of this text string,
+   * with behavior like
+   * [String.slice](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/slice).
+   */
+  slice(start?: number, end?: number): string {
+    return this.text.slice(start, end).join("");
+  }
+
+  /**
+   * @return The position currently at index.
+   */
+  getPosition(index: number): Position {
+    return this.text.getPosition(index);
+  }
+
+  /**
+   * Returns the current index of position.
+   *
+   * If position is not currently present in the list
+   * ([[hasPosition]] returns false), then the result depends on searchDir:
+   * - "none" (default): Returns -1.
+   * - "left": Returns the next index to the left of position.
+   * If there are no values to the left of position,
+   * returns -1.
+   * - "right": Returns the next index to the right of position.
+   * If there are no values to the left of position,
+   * returns [[length]].
+   */
+  indexOfPosition(
+    position: Position,
+    searchDir?: "none" | "left" | "right"
+  ): number {
+    return this.text.indexOfPosition(position, searchDir);
+  }
+
+  /**
+   * Returns whether position is currently present in the list,
+   * i.e., its value is present.
+   */
+  hasPosition(position: Position): boolean {
+    return this.text.hasPosition(position);
+  }
+
+  /**
+   * Returns the value at position, or undefined if it is not currently present
+   * ([[hasPosition]] returns false).
+   */
+  getByPosition(position: Position): string | undefined {
+    return this.text.getByPosition(position);
+  }
+
+  /** Returns an iterator for present positions, in list order. */
+  positions(): IterableIterator<Position> {
+    return this.text.positions();
+  }
+
+  /**
+   * The abstract total order underlying this text CRDT.
+   *
+   * Access this to construct separate [[LocalList]] views on top of
+   * the same total order.
+   */
+  get totalOrder(): CTotalOrder {
+    return this.text.totalOrder;
+  }
+
+  /**
+   * Returns the plain text as an ordinary string.
+   */
+  toString(): string {
+    return this.text.slice().join("");
+  }
+
+  /**
+   * Deletes every character in the text string.
+   */
+  clear() {
+    this.text.clear();
+  }
+
+  /**
+   * Returns a string consisting of the single character
+   * (UTF-16 codepoint) at `index`.
+   *
+   * @throws If index is not in `[0, this.length)`.
+   * Note that this differs from an ordinary string,
+   * which would instead return an empty string.
+   */
+  charAt(index: number): string {
+    return this.text.get(index);
   }
 }
 

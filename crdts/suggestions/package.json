@@ -1,8 +1,10 @@
 {
-  "main": "build/commonjs/src/index.js",
-  "module": "build/esm/src/index.js",
-  "browser": "build/esm/src/index.js",
-  "types": "build/esm/src/index.d.ts",
+  "name": "track-changes-crdt",
+  "version": "0.0.1",
+  "main": "build/commonjs/index.js",
+  "module": "build/esm/index.js",
+  "browser": "build/esm/index.js",
+  "types": "build/esm/index.d.ts",
   "files": [
     "/build",
     "/src"

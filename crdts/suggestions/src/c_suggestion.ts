@@ -18,7 +18,8 @@ import {
 } from "@collabs/collabs";
 
 /**
- * The lamport timestamp and the senderId combined in one string of the format lamport-senderId
+ * A string that combines the Lamport timestamp and the `senderID` into a unique identifier,
+ * using the format `lamport-senderId`.
  */
 export type SuggestionId = string;
 
@@ -26,14 +27,20 @@ export type SuggestionId = string;
  * Type of a suggestion.
  */
 export enum SuggestionType {
-  /** A string that is added to a range of text */
+  /** A suggestion that adds a textual comment to a range of text. */
   COMMENT = "comment",
-  /** A proposed insertion or deletion into or of a range of text */
+  /** A suggestion that proposes an insertion or deletion of text within a given range. */
   SUGGESTION = "suggestion",
 }
 
 /**
- * Specificies whether the suggestion adds or removes something.
+ * Specifies whether the suggestion represents an addition or a removal of a mark.
+ *
+ * An addition introduces a new mark, for example, adding a comment (`ADD_COMMENT`)
+ * or proposing a deletion (`DELETE_SUGGESTION`).
+ *
+ * A removal resolves an existing mark, for example, removing a comment (`REMOVE_COMMENT`)
+ * or accepting a suggestion (`ACCEPT_SUGGESTION`).
  */
 export enum SuggestionAction {
   ADDITION = "addition",
@@ -48,32 +55,32 @@ export enum SuggestionDescription {
   ADD_COMMENT = "addComment",
   /** Removes a text comment from the given range */
   REMOVE_COMMENT = "removeComment",
-  /** Marks the given range as a suggestion to insert the text into the final document */
+  /** Marks the given range as a suggestion to insert text into the final document. */
   INSERT_SUGGESTION = "insertSuggestion",
-  /** Marks the given range as a suggestion to delete the text from the final document */
+  /** Marks the given range as a suggestion to delete text from the final document. */
   DELETE_SUGGESTION = "deleteSuggestion",
-  /** Marks the text in the given range as an approved suggestion e.g. normal text */
+  /** Marks the text in the given range as an accepted suggestion, e.g., the text becomes part of the main document. */
   ACCEPT_SUGGESTION = "acceptSuggestion",
-  /** Marks the text in the given range as declined suggestion e.g. removed text */
+  /** Marks the text in the given range as a declined suggestion, e.g., the proposed change is discarded. */
   DECLINE_SUGGESTION = "declineSuggestion",
 }
 
 export interface PartialSuggestion {
-  /** The type of the mark. Specifies broadly if something is added or removed. */
+  /** The type of the suggestion, specifying whether it concerns a comment or a textual change. */
   readonly type: SuggestionType;
-  /** The action of the suggestion. */
+  /** The action of the suggestion, i.e. if it inserts or removes a suggestion or comment */
   readonly action: SuggestionAction;
-  /** The specific description of the mark */
+  /** The specific description of the suggestion's purpose. */
   readonly description: SuggestionDescription;
-  /** The value. Only needed for comments. Stores the text of comments */
+  /** The value of the suggestion. For comments, this holds the comment text. For other types, it is typically `undefined`. */
   readonly value?: string | undefined;
   /** The id of the user account that created the suggestion */
   readonly userId: string;
-  /** Start of the range */
+  /** The start of the text range this suggestion applies to. */
   readonly startPosition: Position;
-  /** End of the range. Null for end of the document */
+  /** The end of the text range this suggestion applies to, or `null` for the end of the document. */
   readonly endPosition: Position | null;
-  /** Whether inserting directly behind the range extends the range to include the insertion or not */
+  /** Determines the behavior of insertions at the `endPosition`. If `true`, an insertion at the end position is considered part of the suggestion's range. */
   readonly endClosed: boolean;
   /**
    * When the suggestion is dependent on another suggestion, then this is the id of the other suggestion.
@@ -82,8 +89,15 @@ export interface PartialSuggestion {
   readonly dependentOn?: SuggestionId;
 }
 
+/**
+ * A suggestion is the building block of the track changes feature.
+ * Each proposed change is modeled as a suggestion that spans a range of text.
+ * This can be an insertion of text, a comment, or the acceptance or decline of such a suggestion.
+ *
+ * Each suggestion is described by its type, its action, and a distinct description.
+ */
 export interface Suggestion extends PartialSuggestion {
-  /** For easier handling, this is the lamport timestamp and the senderId combined in one string of the format lamport-senderId */
+  /** A unique identifier, combining the Lamport timestamp and the senderID into a single string in the format `lamport-senderId` for easier handling. */
   readonly id: SuggestionId;
   /** The lamport timestamp of the action that inserted the suggestion to determine a happened-before relationship */
   readonly lamport: number;
@@ -94,17 +108,17 @@ export interface Suggestion extends PartialSuggestion {
 interface SuggestionLogSavedState {
   /** The ids of all senders (e.g. clients) that sent suggestions */
   senderIds: string[];
-  /** The number of suggestions of each sender. Used to recreate a map from the array of suggestions */
+  /** The number of suggestions from each sender, corresponding to the `senderIds` array. Used to reconstruct the map. */
   lengths: number[];
-  /** The suggestions */
+  /** A flattened list of all suggestions. */
   suggestions: PartialSuggestion[];
-  /** The lamport timestamp for each suggestion */
+  /** A flattened list of Lamport timestamps for each suggestion. */
   lamports: number[];
 }
 
 /**
- * This event is emitted erverytime a suggestion is added to the log.
- * This can happen locally or by another client.
+ * This event is emitted whenever a suggestion is added to the log.
+ * This can be triggered by a local operation or by a message from a remote replica.
  */
 export interface SuggestionAddEvent extends CollabEvent {
   suggestion: Suggestion;
@@ -115,12 +129,13 @@ export interface SuggestionEventsRecord extends CollabEventsRecord {
 }
 
 /**
- * An append only log of suggestions and comments, used by CTrackChanges.
- * Only used internally and not exported.
+ * An append-only log of suggestions and comments.
+ * Intended for internal use by `CTrackChanges`.
  */
 export class CSuggestionLog extends PrimitiveCRDT<SuggestionEventsRecord> {
   /**
-   * A log of suggestions. They are needed to save the current state of the crdt.
+   * A log of all received suggestions, grouped by `senderID`.
+   * This is the primary state of the CRDT and is used for saving its state.
    */
   private readonly log = new Map<string, Suggestion[]>();
 
@@ -134,8 +149,9 @@ export class CSuggestionLog extends PrimitiveCRDT<SuggestionEventsRecord> {
   }
 
   /**
-   * Adds a suggestion and sends it to all other connected client and to itself.
-   * @param suggestion The suggestion to add
+   * Adds a new suggestion to the log.
+   * This operation is broadcast to all replicas.
+   * @param suggestion The suggestion to add.
    */
   add(suggestion: PartialSuggestion) {
     super.sendCRDT(this.partialSuggestionSerializer.serialize(suggestion));

@@ -1,4 +1,4 @@
-# CRDTs with suggestion mode support
+# Suggestion Mode for Raw Text Editing
 
 This monorepo contains libraries for building collaborative editing applications with suggestion (track changes) support, based on the Collabs CRDT framework.
 

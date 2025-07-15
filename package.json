@@ -4,8 +4,9 @@
     "workspaces": [
         "client",
         "server",
-        "crdts/suggestions",
-        "crdts/track-changes-application"
+        "crdts/track-changes-crdt",
+        "crdts/track-changes-application",
+        "examples/text-editor"
     ],
     "dependencies": {
         "typedoc": "^0.28.7",

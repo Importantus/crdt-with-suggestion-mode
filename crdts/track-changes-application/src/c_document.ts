@@ -1,5 +1,5 @@
 import { CObject, CText, InitToken } from "@collabs/collabs";
-import { TrackChanges } from "../../track-changes-crdt/build/esm";
+import { TrackChanges } from "track-changes-crdt";
 
 /**
  * Unique identifier type for collaborative documents.

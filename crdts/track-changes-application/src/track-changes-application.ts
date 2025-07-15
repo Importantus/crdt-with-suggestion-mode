@@ -60,18 +60,11 @@ export class TrackChangesApplication extends CObject {
 
     this.documents = super.registerCollab(
       "documents",
-      (init) => new CMap(init, this.constructDocument)
+      (init) =>
+        new CMap(init, (init, key) => {
+          return new TrackChangesDocument(init, key, this.userId);
+        })
     );
-  }
-
-  /**
-   * Internal factory for creating new TrackChangesDocument instances.
-   * @param init Initialization token for the document.
-   * @param key Document identifier.
-   * @returns A new TrackChangesDocument instance.
-   */
-  private constructDocument(init: InitToken, key: string) {
-    return new TrackChangesDocument(init, key, this.userId);
   }
 
   /**

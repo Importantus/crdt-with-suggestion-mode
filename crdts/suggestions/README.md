@@ -1,22 +1,41 @@
-# Collabs Custom CRDT Template
+# Track Changes CRDT for Collabs
 
-**Template for a library exporting a custom Collabs CRDT.**
+This library provides a collaborative data structure (CRDT) for tracking changes and suggestions in text documents, built on top of the [Collabs](https://collabs.readthedocs.io/) framework. It enables real-time collaborative editing with support for suggestions, comments, and change tracking, suitable for applications like document editors.
 
-This template demonstrates how to define a custom Collab (collaborative data structure / CRDT) and export it for reuse.
+## Features
 
-See [src/custom_type.ts](./src/custom_type.ts).
+- **Track Changes**: Model insertions, deletions, and formatting changes as suggestions.
+- **Suggestions**: Propose, accept, or decline changes to the document collaboratively.
+- **Comments**: Add and remove comments on text ranges.
+- **CRDT-based**: Ensures consistency and conflict-free merging across distributed replicas.
+- **TypeScript API**: Strongly typed interfaces for integration and extension.
 
-[test/custom_type.test.ts](./test/custom_type.test.ts) lets you test your Collab using [TestingRuntimes](https://collabs.readthedocs.io/en/latest/api/collabs/classes/TestingRuntimes.html).
+## Usage
 
-The rest of this template is a (basic) TypeScript library setup.
+Create a new instance:
 
-## Custom messages
+// TODO: Add usage example here
+```typescript
 
-Many types can be built out of existing Collabs types using `CObject`. However, sometimes you need the power of raw message passing, e.g., when writing a `CPrimitive`.
+```
 
-Collabs expects `Uint8Array | string` for these messages. Some suggested ways to encoded and decode:
+Apply edits and suggestions:
 
-- Use JSON to encode plain JS objects as strings.
-- Use [BSON](https://www.npmjs.com/package/bson) (binary JSON) to encode plain JS objects as `Uint8Array`s.
-- Use provided [Serializer](https://collabs.readthedocs.io/en/latest/api/core/interfaces/Serializer.html) instances - in particular, [DefaultSerializer](https://collabs.readthedocs.io/en/latest/api/collabs/classes/DefaultSerializer.html), which can serialize many non-circular types, including [CollabID](https://collabs.readthedocs.io/en/latest/api/collabs/modules.html#CollabID).
-- Use [protobuf.js](https://github.com/protobufjs/protobuf.js) with [its Typescript support](https://github.com/protobufjs/protobuf.js#usage-with-typescript). This is what Collabs does. See the @collabs/collabs package for an example of how to set this up; it's a bit tricky to get the ESM build working and make it tree-shakable, due to bugs in the library's ESM output (as of 09/2021).
+```typescript
+trackChanges.insert(0, "Hello world", true); // Insert with suggestion
+trackChanges.delete(6, 5, true); // Suggest deletion
+trackChanges.addComment(0, 5, "Check this intro");
+```
+
+Accept or decline suggestions:
+
+```typescript
+trackChanges.acceptSuggestion(index, suggestionId);
+trackChanges.declineSuggestion(index, suggestionId);
+```
+
+## Development
+
+- Build: `npm run build`
+- Test: `npm test`
+- Documentation: `npm run build:docs`

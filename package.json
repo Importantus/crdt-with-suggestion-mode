@@ -1,0 +1,17 @@
+{
+    "name": "crdt-with-suggestion-mode",
+    "private": true,
+    "workspaces": [
+        "client",
+        "server",
+        "crdts/suggestions",
+        "crdts/track-changes-application"
+    ],
+    "dependencies": {
+        "typedoc": "^0.28.7",
+        "typedoc-github-theme": "^0.3.0"
+    },
+    "scripts": {
+        "build:docs": "typedoc"
+    }
+}

@@ -1,0 +1,14 @@
+{
+    "entryPointStrategy": "packages",
+    "entryPoints": [
+        "crdts/*"
+    ],
+    "packageOptions": {
+        "entryPoints": [
+            "src/index.ts"
+        ]
+    },
+    "plugin": [
+        "typedoc-github-theme"
+    ]
+}

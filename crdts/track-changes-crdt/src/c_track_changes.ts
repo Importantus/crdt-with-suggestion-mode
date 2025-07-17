@@ -103,6 +103,18 @@ export interface TrackChangesSuggestionRemovedEvent extends CollabEvent {
    */
   author: string;
   /**
+   * The range's starting index, inclusive.
+   *
+   * The affected characters are `text.slice(startIndex, endIndex)`.
+   */
+  startIndex: number;
+  /**
+   * The range's ending index, exclusive.
+   *
+   * The affected characters are `text.slice(startIndex, endIndex)`.
+   */
+  endIndex: number;
+  /**
    * The reason why the suggestion was removed
    */
   reason: SuggestionRemovalReason;
@@ -240,7 +252,7 @@ export class TrackChanges
     );
     const endIndex =
       suggestion.endPosition === null
-        ? this.suggestionList.length - 1
+        ? null // If the suggestion is open ended an goes to the end of the document, no ending should be set
         : this.suggestionList.indexOfPosition(suggestion.endPosition);
 
     // ---- Step 2: Iterate over the affected range and collect changes ----
@@ -267,7 +279,11 @@ export class TrackChanges
     // If there are existing suggestions that are mutually exclusive with the
     // new suggestion (i.e. addition with a corresponding removal), remove
     // them, and discard the suggestion
-    for (let i = startIndex; i <= endIndex; i++) {
+    for (
+      let i = startIndex;
+      i <= (endIndex || this.suggestionList.length - 1); // If no end index is set, the suggestion goes to the end of the document
+      i++
+    ) {
       const position = this.suggestionList.getPosition(i);
       const data = this.suggestionList.getByPosition(position)!;
       const isEnd = i === endIndex;
@@ -342,6 +358,7 @@ export class TrackChanges
       // Check if it replaces an existing suggestion (e.g., growing a delete range).
       const existing = suggestionsOfType.find(
         (s) =>
+          s.description === SuggestionDescription.DELETE_SUGGESTION && // Only deleting ranges can be replaced
           s.userId === newSuggestion.userId &&
           s.description === newSuggestion.description
       ); // This is not commutative, it should be the longest existing range instead of the first. But that would be to expensive to calculate each time, so I hope it works like that too
@@ -461,7 +478,7 @@ export class TrackChanges
       const startIndex = this.text.indexOfPosition(added.new.startPosition);
       const endIndex = added.new.endPosition
         ? this.text.indexOfPosition(added.new.endPosition)
-        : this.text.length; // Correctly handle open-ended ranges
+        : this.text.length;
 
       this.emit("SuggestionAdded", {
         meta,
@@ -473,7 +490,14 @@ export class TrackChanges
     }
 
     for (const removed of removedMap.values()) {
+      const startIndex = this.text.indexOfPosition(removed.prev.startPosition);
+      const endIndex = removed.prev.endPosition
+        ? this.text.indexOfPosition(removed.prev.endPosition)
+        : this.text.length;
+
       this.emit("SuggestionRemoved", {
+        startIndex,
+        endIndex,
         meta,
         author,
         reason: removed.reason,
@@ -614,6 +638,8 @@ export class TrackChanges
     const startPos = this.text.getPosition(index);
     const existing = this.getSuggestionsInternal(startPos);
 
+    console.log("Existing Suggestion", existing);
+
     // If the insertion is a suggestion and not part of an existing insertion
     // suggestion of the same user, create a new suggestion
     if (
@@ -729,10 +755,13 @@ export class TrackChanges
       index > 0 ? this.text.getPosition(index - 1) : null,
       "previous"
     );
-    const nextSuggestion = this.findAdjacentDeleteSuggestion(
-      this.text.getPosition(index + 1),
-      "next"
-    );
+    const nextSuggestion =
+      index + 1 < this.text.length
+        ? this.findAdjacentDeleteSuggestion(
+            this.text.getPosition(index + 1),
+            "next"
+          )
+        : undefined;
 
     // Determine the final start and end positions for the new/merged suggestion.
     const finalStartPosition = prevSuggestion

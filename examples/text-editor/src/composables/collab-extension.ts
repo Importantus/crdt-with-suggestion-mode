@@ -2,7 +2,7 @@
 
 import type { useCollabStore } from '@/stores/collab'
 import type { useDocumentStore } from '@/stores/document'
-import { Annotation, EditorState, Prec, Range, StateEffect } from '@codemirror/state'
+import { Annotation, EditorState, Prec, Range, StateEffect, StateField } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -24,44 +24,72 @@ export const isProcessedAnnotation = Annotation.define<boolean>()
  */
 const refreshDecorationsEffect = StateEffect.define<void>()
 
-// --- 1. Dekorationen für Suggestions ---
+// --- 1. Dekorationen für Suggestions (mit StateField) ---
 
 const suggestionMarkDelete = Decoration.mark({ class: 'cm-suggestion-delete' })
 const suggestionMarkInsert = Decoration.mark({ class: 'cm-suggestion-insert' })
 
 /**
- * Erzeugt ein DecorationSet für alle aktiven Suggestions aus dem DocumentStore.
- * @param docStore - Die Instanz des Document Stores.
- * @param state - Der aktuelle EditorState zur Positionsberechnung.
- * @returns Ein Set von Dekorationen.
+ * Definiert einen StateEffect zum Hinzufügen einer Vorschlagsdekoration.
+ * Die Nutzlast enthält alle notwendigen Informationen.
  */
-function getSuggestionDecorations(
-  docStore: ReturnType<typeof useDocumentStore>,
-  state: EditorState,
-): DecorationSet {
-  const decorations: Range<Decoration>[] = []
-  if (!docStore.isDocumentLoaded) return Decoration.none
+const addSuggestionEffect = StateEffect.define<{
+  from: number
+  to: number
+  description: SuggestionDescription
+  endClosed: boolean
+}>({
+  map: ({ from, to, endClosed, ...rest }, change) => ({
+    from: change.mapPos(from),
+    to: change.mapPos(endClosed ? to + 1 : to),
+    endClosed,
+    ...rest,
+  }),
+})
 
-  for (const suggestion of docStore.suggestions.values()) {
-    const from = Cursors.toIndex(suggestion.startPosition, docStore.document!.content)
-    const to = suggestion.endPosition
-      ? Cursors.toIndex(suggestion.endPosition, docStore.document!.content)
-      : state.doc.length // Platzhalter
+/**
+ * Definiert einen StateEffect zum Entfernen von Vorschlagsdekorationen in einem bestimmten Bereich.
+ */
+const removeSuggestionEffect = StateEffect.define<{ from: number; to: number }>()
 
-    if (from >= to) continue
+/**
+ * Ein StateField, das die DecorationSet für alle Vorschläge verwaltet.
+ * Dies ist analog zum `underlineField` aus dem Beispiel.
+ */
+const suggestionField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none
+  },
+  update(suggestions, tr) {
+    // Positionen an die Änderungen in der Transaktion anpassen
+    suggestions = suggestions.map(tr.changes)
 
-    switch (suggestion.description) {
-      case SuggestionDescription.DELETE_SUGGESTION:
-        decorations.push(suggestionMarkDelete.range(from, to))
-        break
-      case SuggestionDescription.INSERT_SUGGESTION:
-        decorations.push(suggestionMarkInsert.range(from, to))
-        break
+    // Effekte verarbeiten
+    for (const effect of tr.effects) {
+      if (effect.is(addSuggestionEffect)) {
+        const { from, to, description } = effect.value
+        console.log('Adding suggestion:', description, from, to)
+        if (from >= to) continue
+
+        const mark =
+          description === SuggestionDescription.DELETE_SUGGESTION
+            ? suggestionMarkDelete
+            : suggestionMarkInsert
+        suggestions = suggestions.update({
+          add: [mark.range(from, to)],
+        })
+      } else if (effect.is(removeSuggestionEffect)) {
+        const { from, to } = effect.value
+        console.log('Removing suggestion from', from, 'to', to)
+        suggestions = suggestions.update({
+          filter: (f, t) => f < from || t > to,
+        })
+      }
     }
-  }
-
-  return Decoration.set(decorations)
-}
+    return suggestions
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
 
 // --- 2. Dekorationen für Remote-Cursors ---
 
@@ -135,18 +163,20 @@ export function createCollabExtension(
    */
   const collabPlugin = ViewPlugin.fromClass(
     class {
-      private unsubscribeFromDocumentChange?: () => void
-      private unsubscribeFromTextChange: (() => void)[] = []
+      private unsubscribeFromCollabChange: (() => void)[] = []
+      private unsubscribeFromDocumentChange: (() => void)[] = []
 
       constructor(private view: EditorView) {
         // Hängt Listener an die Stores, um auf externe Änderungen zu reagieren.
-        this.unsubscribeFromDocumentChange = docStore.$onAction(({ name, store, after }) => {
-          // Wenn der Store durch eine externe Quelle (nicht CM6) aktualisiert wurde,
-          // müssen wir den Editor benachrichtigen.
-          if (name === 'setDocument') {
-            after(() => this.syncFullDocument(store.textContent))
-          }
-        })
+        this.unsubscribeFromCollabChange.push(
+          docStore.$onAction(({ name, store, after }) => {
+            // Wenn der Store durch eine externe Quelle (nicht CM6) aktualisiert wurde,
+            // müssen wir den Editor benachrichtigen.
+            if (name === 'setDocument') {
+              after(() => this.syncFullDocument(store.textContent))
+            }
+          }),
+        )
 
         setTimeout(() => {
           if (docStore.document) {
@@ -155,31 +185,65 @@ export function createCollabExtension(
         })
       }
 
+      addSuggestionChangeListener() {
+        if (docStore.document) {
+          this.unsubscribeFromDocumentChange.push(
+            docStore.document.content.on('SuggestionAdded', (event) => {
+              this.view.dispatch({
+                selection:
+                  event.meta.isLocalOp &&
+                  event.suggestion.description === SuggestionDescription.DELETE_SUGGESTION
+                    ? { anchor: event.startIndex }
+                    : undefined,
+                effects: addSuggestionEffect.of({
+                  from: event.startIndex,
+                  to: event.endIndex,
+                  description: event.suggestion.description,
+                  endClosed: event.suggestion.endClosed ?? false,
+                }),
+              })
+            }),
+          )
+
+          this.unsubscribeFromDocumentChange.push(
+            docStore.document.content.on('SuggestionRemoved', (event) => {
+              this.view.dispatch({
+                effects: removeSuggestionEffect.of({ from: event.startIndex, to: event.endIndex }),
+              })
+            }),
+          )
+        }
+      }
+
       addTextChangeListeners() {
         console.log('Adding text change listeners...')
         if (docStore.document) {
-          this.unsubscribeFromTextChange.push(
+          this.unsubscribeFromDocumentChange.push(
             docStore.document?.content.on('Insert', (i) => {
               const transaction = this.view.state.update({
                 changes: { from: i.index, insert: i.values },
                 annotations: isProcessedAnnotation.of(true),
-                // filter: true,
-                selection: { anchor: i.index + 1 },
+                selection: i.meta.isLocalOp ? { anchor: i.index + 1 } : undefined,
+                effects: i.suggestions?.map((s) =>
+                  addSuggestionEffect.of({
+                    from: i.index,
+                    to: i.index + i.values.length,
+                    description: s.description,
+                    endClosed: s.endClosed ?? false,
+                  }),
+                ),
               })
-
-              console.log('Inserting text')
 
               this.view.dispatch(transaction)
             }),
           )
 
-          this.unsubscribeFromTextChange.push(
+          this.unsubscribeFromDocumentChange.push(
             docStore.document?.content.on('Delete', (d) => {
               const transaction = this.view.state.update({
                 changes: { from: d.index, to: d.index + d.values.length },
                 annotations: isProcessedAnnotation.of(true),
-                // filter: true,
-                selection: { anchor: d.index },
+                selection: d.meta.isLocalOp ? { anchor: d.index } : undefined,
               })
 
               this.view.dispatch(transaction)
@@ -189,38 +253,7 @@ export function createCollabExtension(
       }
 
       removeTextChangeListeners() {
-        this.unsubscribeFromTextChange.forEach((f) => f())
-      }
-
-      update(update: ViewUpdate) {
-        // if (update.docChanged) {
-        //   update.transactions
-        //     .filter((t) => !t.annotation(isProcessedAnnotation))
-        //     .flatMap((t) => t.changes)
-        //     .forEach((cs) =>
-        //       cs.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-        //         const deleted = update.startState.doc.sliceString(fromA, toA)
-        //         if (deleted.length > 0) {
-        //           docStore.deleteText(fromA, deleted.length, collabStore.isSuggestionMode)
-        //         }
-        //         if (inserted.length > 0) {
-        //           docStore.insertText(fromA, inserted.toString(), collabStore.isSuggestionMode)
-        //         }
-        //       }),
-        //     )
-        // }
-        // // Lokale Selektionsänderungen an den Store senden
-        // if (update.selectionSet && docStore.document?.content.length) {
-        //   const selection = update.state.selection.main
-        //   // Hier müssten die Indizes wieder in Cursor-Objekte umgewandelt werden
-        //   collabStore.updateMyPresence({
-        //     selection: {
-        //       document: docStore.id!,
-        //       anchor: Cursors.fromIndex(selection.anchor, docStore.document.content),
-        //       head: Cursors.fromIndex(selection.head, docStore.document.content),
-        //     },
-        //   })
-        // }
+        this.unsubscribeFromDocumentChange.forEach((f) => f())
       }
 
       /**
@@ -231,7 +264,24 @@ export function createCollabExtension(
       syncFullDocument(text: string) {
         console.log('Sync full document')
 
-        this.unsubscribeFromTextChange.forEach((f) => f())
+        this.unsubscribeFromDocumentChange.forEach((f) => f())
+
+        const effects: StateEffect<unknown>[] = []
+
+        if (!this.view.state.field(suggestionField, false)) {
+          effects.push(StateEffect.appendConfig.of([suggestionField, suggestionTheme]))
+        }
+
+        docStore.suggestions.forEach((suggestion) => {
+          effects.push(
+            addSuggestionEffect.of({
+              from: suggestion.startIndex,
+              to: suggestion.endIndex,
+              description: suggestion.suggestion.description,
+              endClosed: suggestion.suggestion.endClosed ?? false,
+            }),
+          )
+        })
 
         this.view.dispatch({
           changes: {
@@ -240,23 +290,24 @@ export function createCollabExtension(
             insert: text,
           },
           annotations: isProcessedAnnotation.of(true),
-          effects: [refreshDecorationsEffect.of()], // Dekorationen neu zeichnen
+          effects: effects,
         })
 
         this.addTextChangeListeners()
+        this.addSuggestionChangeListener()
       }
 
       destroy() {
-        if (this.unsubscribeFromDocumentChange) {
-          this.unsubscribeFromDocumentChange()
+        if (this.unsubscribeFromCollabChange) {
+          this.unsubscribeFromCollabChange.forEach((f) => f())
         }
       }
     },
   )
 
   /**
-   * Ein separates Plugin zur Verwaltung der Dekorationen.
-   * Es reagiert auf den `refreshDecorationsEffect`.
+   * Ein separates Plugin zur Verwaltung der Cursor-Dekorationen.
+   * Die Vorschläge werden jetzt durch das suggestionField verwaltet.
    */
   const decorationsPlugin = ViewPlugin.fromClass(
     class {
@@ -277,17 +328,8 @@ export function createCollabExtension(
       }
 
       private computeDecorations(state: EditorState): DecorationSet {
-        const suggestions = getSuggestionDecorations(docStore, state)
-        const remoteSelections = getRemoteSelectionDecorations(docStore, collabStore)
-        const remoteRanges: Range<Decoration>[] = []
-        for (let cursor = remoteSelections.iter(); cursor.value; cursor.next()) {
-          remoteRanges.push({
-            from: cursor.from,
-            to: cursor.to,
-            value: cursor.value,
-          })
-        }
-        return suggestions //.update({ add: remoteRanges })
+        // Nur noch die Cursors/Selections berechnen
+        return getRemoteSelectionDecorations(docStore, collabStore)
       }
     },
     {
@@ -297,8 +339,9 @@ export function createCollabExtension(
 
   /**
    * Ein Theme zur Gestaltung der Dekorationen.
+   * Umbenannt, um Verwechslungen zu vermeiden.
    */
-  const customTheme = EditorView.baseTheme({
+  const suggestionTheme = EditorView.baseTheme({
     '.cm-suggestion-delete': {
       textDecoration: 'line-through',
       backgroundColor: '#ff000033',
@@ -306,6 +349,9 @@ export function createCollabExtension(
     '.cm-suggestion-insert': {
       backgroundColor: '#00ff0033',
     },
+  })
+
+  const remoteCursorTheme = EditorView.baseTheme({
     '.cm-remote-selection': {
       // Stil wird inline gesetzt
     },
@@ -334,7 +380,15 @@ export function createCollabExtension(
     ]),
   )
 
-  return [collabPlugin, decorationsPlugin, customTheme, historyKeymapOverride]
+  // Die Extension-Liste muss nun das suggestionField enthalten
+  return [
+    collabPlugin,
+    suggestionField, // Das neue StateField für Suggestions
+    decorationsPlugin, // Plugin nur noch für Cursors
+    suggestionTheme, // Theme für Suggestions
+    remoteCursorTheme, // Theme für Cursors
+    historyKeymapOverride,
+  ]
 }
 
 /**

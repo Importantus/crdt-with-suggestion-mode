@@ -89,7 +89,7 @@ export function useCodeMirror(elementRef: Ref<HTMLDivElement | null>) {
             })
           }
 
-          return !tr.annotation(isProcessedAnnotation) && tr.docChanged ? {} : tr
+          return tr.annotation(isProcessedAnnotation) || !tr.docChanged ? tr : {}
         }),
         // A line number gutter
         lineNumbers(),

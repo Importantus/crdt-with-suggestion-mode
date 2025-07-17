@@ -5,6 +5,7 @@ import {
   type Suggestion,
   type SuggestionId,
 } from 'track-changes-application'
+import type { TrackChangesSuggestionAddedEvent } from 'track-changes-crdt'
 import { computed, reactive, ref, shallowRef } from 'vue'
 
 // Ein Array, um die "unsubscribe"-Funktionen der Event-Listener zu speichern.
@@ -37,7 +38,7 @@ export const useDocumentStore = defineStore('document', () => {
    * Eine reaktive Map aller aktiven Vorschläge (Suggestions) im Dokument.
    * Key: SuggestionId, Value: Suggestion
    */
-  const suggestions = reactive<Map<SuggestionId, Suggestion>>(new Map())
+  const suggestions = reactive<Map<SuggestionId, TrackChangesSuggestionAddedEvent>>(new Map())
 
   // --- COMPUTED ---
   const id = computed<DocumentID | null>(() => document.value?.id ?? null)
@@ -82,10 +83,8 @@ export const useDocumentStore = defineStore('document', () => {
     const onTextDelete = () => {
       textContent.value = newDoc.content.toString()
     }
-    const onSuggestionAdded = (event: { suggestion: Suggestion }) => {
-      suggestions.set(event.suggestion.id, event.suggestion)
-    }
     const onSuggestionRemoved = (event: { suggestion: Suggestion }) => {
+      console.log('Suggestion removed')
       suggestions.delete(event.suggestion.id)
     }
     // Wir könnten auch auf FormatChange hören, um die Darstellung zu aktualisieren.
@@ -93,7 +92,9 @@ export const useDocumentStore = defineStore('document', () => {
       newDoc.fileName.on('Any', onFileNameChange),
       newDoc.content.on('Insert', onTextInsert),
       newDoc.content.on('Delete', onTextDelete),
-      newDoc.content.on('SuggestionAdded', onSuggestionAdded),
+      newDoc.content.on('SuggestionAdded', (event) => {
+        suggestions.set(event.suggestion.id, event)
+      }),
       newDoc.content.on('SuggestionRemoved', onSuggestionRemoved),
     )
   }

@@ -182,27 +182,28 @@ export class CSuggestionLog extends PrimitiveCRDT<SuggestionEventsRecord> {
   }
 
   protected override saveCRDT(): Uint8Array {
-    return this.savedStateSerializer.serialize(
-      Array.from(this.log.entries()).reduce(
-        (acc, [senderID, senderSuggestions]) => {
-          acc.senderIds.push(senderID);
-          acc.lengths.push(senderSuggestions.length);
+    const senderIDs = Array.from({ length: this.log.size });
+    const lengths = Array.from({ length: this.log.size });
+    const suggestions: Suggestion[] = [];
+    const lamports: number[] = [];
 
-          senderSuggestions.forEach((suggestion) => {
-            acc.suggestions.push(suggestion);
-            acc.lamports.push(suggestion.lamport);
-          });
+    let i = 0;
+    for (const [senderID, senderSuggestions] of this.log) {
+      senderIDs[i] = senderID;
+      lengths[i] = senderSuggestions.length;
+      for (const suggestion of senderSuggestions) {
+        suggestions.push(suggestion);
+        lamports.push(suggestion.lamport);
+      }
+      i++;
+    }
 
-          return acc;
-        },
-        {
-          senderIds: [],
-          lengths: [],
-          suggestions: [],
-          lamports: [],
-        } as SuggestionLogSavedState
-      )
-    );
+    return this.savedStateSerializer.serialize({
+      senderIds: senderIDs,
+      lengths,
+      suggestions,
+      lamports,
+    } as SuggestionLogSavedState);
   }
 
   protected override loadCRDT(
@@ -210,40 +211,36 @@ export class CSuggestionLog extends PrimitiveCRDT<SuggestionEventsRecord> {
     meta: SavedStateMeta,
     _: CRDTSavedStateMeta
   ): void {
-    if (!savedState) return;
+    if (savedState === null) return;
 
     const decoded = this.savedStateSerializer.deserialize(savedState);
-
+    let suggestionIndex = 0;
     for (let i = 0; i < decoded.senderIds.length; i++) {
-      const senderId = decoded.senderIds[i];
-      const numberOfSuggestions = decoded.lengths[i];
+      const senderID = decoded.senderIds[i];
+      let lastLamport: number;
+      let bySender = this.log.get(senderID);
+      if (bySender === undefined) {
+        bySender = [];
+        this.log.set(senderID, bySender);
+        lastLamport = -1;
+      } else {
+        lastLamport = bySender[bySender.length - 1].lamport;
+      }
 
-      const lamportTimestamps = decoded.lamports.splice(0, numberOfSuggestions);
-      const suggestions = decoded.suggestions.splice(0, numberOfSuggestions);
-
-      const currentSuggestionsBySender = this.log.get(senderId) || [];
-
-      // Used to determine if we already have a suggestion
-      const lastLamportTimestamp =
-        currentSuggestionsBySender[currentSuggestionsBySender.length - 1]
-          .lamport || -1;
-
-      for (let j = 0; j < numberOfSuggestions; j++) {
-        const partialSuggestion = suggestions[j];
-        const lamport = lamportTimestamps[j];
-
-        if (lamport > lastLamportTimestamp) {
+      for (let j = 0; j < decoded.lengths[i]; j++) {
+        const lamport = decoded.lamports[suggestionIndex];
+        if (lamport > lastLamport) {
           const suggestion: Suggestion = {
-            ...partialSuggestion,
-            id: `${lamport}-${senderId}`,
+            ...decoded.suggestions[suggestionIndex],
             lamport,
-            senderID: senderId,
+            senderID,
+            id: `${lamport}-${senderID}`,
           };
-
-          this.log.set(senderId, [...currentSuggestionsBySender, suggestion]);
+          bySender.push(suggestion);
 
           this.emit("Add", { suggestion, meta });
         }
+        suggestionIndex++;
       }
     }
   }

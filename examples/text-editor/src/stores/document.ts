@@ -1,3 +1,6 @@
+/**
+ * Written with the help of AI.
+ */
 import { defineStore } from 'pinia'
 import {
   TrackChangesDocument,
@@ -5,7 +8,6 @@ import {
   type Suggestion,
   type SuggestionId,
 } from 'track-changes-application'
-import type { TrackChangesSuggestionAddedEvent } from 'track-changes-crdt'
 import { computed, reactive, ref, shallowRef } from 'vue'
 
 // Ein Array, um die "unsubscribe"-Funktionen der Event-Listener zu speichern.
@@ -38,7 +40,7 @@ export const useDocumentStore = defineStore('document', () => {
    * Eine reaktive Map aller aktiven Vorschläge (Suggestions) im Dokument.
    * Key: SuggestionId, Value: Suggestion
    */
-  const suggestions = reactive<Map<SuggestionId, TrackChangesSuggestionAddedEvent>>(new Map())
+  const suggestions = reactive<Map<SuggestionId, Suggestion>>(new Map())
 
   // --- COMPUTED ---
   const id = computed<DocumentID | null>(() => document.value?.id ?? null)
@@ -69,9 +71,10 @@ export const useDocumentStore = defineStore('document', () => {
     // 3. State mit den Werten des neuen Dokuments initialisieren
     fileName.value = newDoc.fileName.toString()
     textContent.value = newDoc.content.toString()
-    // TODO: Hier müssten initial alle bestehenden Suggestions geladen werden.
-    // Deine Bibliothek scheint keine Methode wie `getSuggestions()` zu haben,
-    // dies wäre eine sinnvolle Ergänzung. Vorerst starten wir mit einer leeren Map.
+    suggestions.clear()
+    newDoc.content.getActiveSuggestions().forEach((item) => {
+      suggestions.set(item.id, item)
+    })
 
     // 4. Neue Listener für das neue Dokument einrichten
     const onFileNameChange = () => {
@@ -93,7 +96,7 @@ export const useDocumentStore = defineStore('document', () => {
       newDoc.content.on('Insert', onTextInsert),
       newDoc.content.on('Delete', onTextDelete),
       newDoc.content.on('SuggestionAdded', (event) => {
-        suggestions.set(event.suggestion.id, event)
+        suggestions.set(event.suggestion.id, event.suggestion)
       }),
       newDoc.content.on('SuggestionRemoved', onSuggestionRemoved),
     )
@@ -113,19 +116,24 @@ export const useDocumentStore = defineStore('document', () => {
     document.value.content.delete(index, count, isSuggestion)
   }
 
-  function acceptSuggestion(index: number, id: SuggestionId) {
-    if (!document.value) return
-    document.value.content.acceptSuggestion(index, id)
+  function acceptSuggestion(id: SuggestionId) {
+    if (!document.value || !suggestions.get(id)) return
+    document.value.content.acceptSuggestion(suggestions.get(id)!.startPosition, id)
   }
 
-  function declineSuggestion(index: number, id: SuggestionId) {
-    if (!document.value) return
-    document.value.content.declineSuggestion(index, id)
+  function declineSuggestion(id: SuggestionId) {
+    if (!document.value || !suggestions.get(id)) return
+    document.value.content.declineSuggestion(suggestions.get(id)!.startPosition, id)
   }
 
   function addComment(startIndex: number, endIndex: number, comment: string) {
     if (!document.value) return
     document.value.content.addComment(startIndex, endIndex, comment)
+  }
+
+  function removeComment(id: SuggestionId) {
+    if (!document.value || !suggestions.get(id)) return
+    document.value.content.removeComment(suggestions.get(id)!.startPosition, id)
   }
 
   return {
@@ -141,5 +149,6 @@ export const useDocumentStore = defineStore('document', () => {
     acceptSuggestion,
     declineSuggestion,
     addComment,
+    removeComment,
   }
 })

@@ -1,5 +1,8 @@
-import { CRuntime } from '@collabs/collabs'
-import { TabSyncNetwork } from '@collabs/tab-sync' // Beispiel für ein Netzwerk
+/**
+ * Written with the help of AI.
+ */
+import { CRuntime, type Cursor } from '@collabs/collabs'
+import { TabSyncNetwork } from '@collabs/tab-sync'
 import { defineStore } from 'pinia'
 import { v4 as uuidv4 } from 'uuid'
 import { reactive, ref, shallowRef, watch } from 'vue'
@@ -8,7 +11,7 @@ import {
   TrackChangesApplication,
   type DocumentID,
   type PresenceState,
-} from 'track-changes-application' // Passe den Pfad an
+} from 'track-changes-application'
 import { useDocumentStore } from './document'
 
 // Ein einfacher Typ für die Darstellung der Dokumentenliste in der UI
@@ -55,6 +58,16 @@ export const useCollabStore = defineStore('collab', () => {
    */
   const presence = reactive<Map<string, PresenceState>>(new Map())
 
+  /***
+   * Die aktuelle Selektion des Benutzers.
+   * Wird von der CRDT-Bibliothek aktualisiert und von der UI verwendet.
+   */
+  const ownSelection = ref<{
+    document: DocumentID
+    anchor: Cursor
+    head: Cursor
+  } | null>(null)
+
   /**
    * Die ID des aktuell vom Benutzer ausgewählten Dokuments.
    */
@@ -82,8 +95,14 @@ export const useCollabStore = defineStore('collab', () => {
     // Event-Listener registrieren, um den Pinia-State zu aktualisieren
     attachEventListeners()
 
+    app.value.presence.setOurs({
+      userId: user,
+      viewing: true,
+      selection: null,
+    })
+    app.value.presence.connect()
+
     isReady.value = true
-    console.log(`Collab session initialized for user: ${user}`)
   }
 
   /**
@@ -120,6 +139,18 @@ export const useCollabStore = defineStore('collab', () => {
     })
     app.value.presence.on('Delete', (event) => {
       presence.delete(event.key)
+    })
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        updateMyPresence({
+          viewing: false,
+        })
+      } else if (document.visibilityState === 'visible') {
+        updateMyPresence({
+          viewing: true,
+        })
+      }
     })
   }
 
@@ -158,7 +189,6 @@ export const useCollabStore = defineStore('collab', () => {
    */
   function toggleSuggestionMode() {
     isSuggestionMode.value = !isSuggestionMode.value
-    console.log(`Suggestion mode is now: ${isSuggestionMode.value ? 'ON' : 'OFF'}`)
   }
 
   /**
@@ -171,11 +201,35 @@ export const useCollabStore = defineStore('collab', () => {
       selection: null,
       viewing: true,
     }
-    app.value.presence.setOurs({
+
+    const newState = {
       ...currentState,
       ...presenceUpdate,
+    }
+
+    if (newState.selection) {
+      ownSelection.value = {
+        document: newState.selection.document,
+        anchor: newState.selection.anchor,
+        head: newState.selection.head,
+      }
+    }
+
+    app.value.presence.setOurs({
+      ...newState,
       userId: currentUserId.value,
     })
+  }
+
+  function leaveDocument() {
+    if (!app.value) return
+    app.value.presence.disconnect()
+    app.value = null
+    isReady.value = false
+    activeDocumentId.value = null
+    documents.clear()
+    presence.clear()
+    ownSelection.value = null
   }
 
   // --- LOGIC / WATCHERS ---
@@ -198,6 +252,9 @@ export const useCollabStore = defineStore('collab', () => {
   ) // 'sync' um race conditions beim schnellen Wechsel zu vermeiden
 
   return {
+    leaveDocument,
+    ownSelection,
+    app,
     isReady,
     currentUserId,
     documents,

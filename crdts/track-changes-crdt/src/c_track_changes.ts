@@ -255,6 +255,8 @@ export class TrackChanges
         ? null // If the suggestion is open ended an goes to the end of the document, no ending should be set
         : this.suggestionList.indexOfPosition(suggestion.endPosition);
 
+    console.log(`Looking trough positions from ${startIndex} to ${endIndex}`);
+
     // ---- Step 2: Iterate over the affected range and collect changes ----
 
     // The collected changes. This includes
@@ -271,17 +273,19 @@ export class TrackChanges
     // But this is not relevant to the ui, the change relevant for the ui is, that
     // the shorter range is removed and the longer range is inserted.)
     const changes: AggregatedChange[] = [];
-    // Actions that have to be performed due to applying a suggestion. E.g. deleting
-    // characters that were in a deletion range.
-    const actionsToPerform: TextAction[] = [];
 
-    // Go trough all datapoints in the given range and add the new suggestion.
+    console.log(
+      "the suggestionList is",
+      Array.from(this.suggestionList.entries())
+    );
+
+    // Go trough all datapoints in the givdocumentStore.addComment()en range and add the new suggestion.
     // If there are existing suggestions that are mutually exclusive with the
     // new suggestion (i.e. addition with a corresponding removal), remove
     // them, and discard the suggestion
     for (
       let i = startIndex;
-      i <= (endIndex || this.suggestionList.length - 1); // If no end index is set, the suggestion goes to the end of the document
+      i <= (endIndex !== null ? endIndex : this.suggestionList.length - 1); // If no end index is set, the suggestion goes to the end of the document
       i++
     ) {
       const position = this.suggestionList.getPosition(i);
@@ -296,26 +300,12 @@ export class TrackChanges
 
       if (change) {
         changes.push({ ...change, position });
-        if (change.textAction) {
-          actionsToPerform.push(change.textAction);
-        }
       }
     }
 
     // ---- Step 3: Emit events based on the collected changes ----
     if (changes.length > 0) {
       this.emitEventsFromChanges(changes, suggestion.userId, meta);
-    }
-
-    // ---- Step 4: Perform side-effects like text deletion ----
-    for (const action of actionsToPerform) {
-      if (action.type === "delete") {
-        const start = this.text.indexOfPosition(action.startPosition);
-        const end = action.endPosition
-          ? this.text.indexOfPosition(action.endPosition)
-          : this.text.length;
-        this.text.delete(start, end - start);
-      }
     }
   }
 
@@ -360,7 +350,8 @@ export class TrackChanges
         (s) =>
           s.description === SuggestionDescription.DELETE_SUGGESTION && // Only deleting ranges can be replaced
           s.userId === newSuggestion.userId &&
-          s.description === newSuggestion.description
+          s.description === newSuggestion.description &&
+          this.wins(newSuggestion, s)
       ); // This is not commutative, it should be the longest existing range instead of the first. But that would be to expensive to calculate each time, so I hope it works like that too
 
       const replacementId = existing ? existing.id : undefined;
@@ -572,14 +563,18 @@ export class TrackChanges
     }
 
     const dataPos = this.suggestionList.getPosition(dataIndex);
+    console.log(
+      `Getting suggestions at position ${dataPos} for position ${position}`
+    );
     const data = this.suggestionList.getByPosition(dataPos);
     if (!data) return null;
-    // Flatten all suggestion arrays and filter out those with endingHere = true where the ending is not inclusive
+    // Flatten all suggestion arrays and
     const suggestions = Array.from(data.values())
       .flat()
-      .filter((s) => !s.endingHere || s.endClosed)
-      // oxlint-disable-next-line no-unused-vars
-      .map(({ endingHere, ...rest }) => rest as Suggestion);
+      .filter(
+        (s) =>
+          !s.endingHere || (dataPos === position && s.endingHere && s.endClosed)
+      ); // only allow suggestions that are not ending here or are ending here and have an endClosed flag
     return suggestions.length > 0 ? suggestions : null;
   }
 
@@ -599,7 +594,16 @@ export class TrackChanges
     if (prevIndex === -1) {
       this.suggestionList.set(position, new Map());
     } else {
-      const prev = this.suggestionList.get(prevIndex);
+      const prev = Array.from(this.suggestionList.get(prevIndex).values())
+        .flat()
+        .filter((s) => !s.endingHere) // Dont copy endingHere suggestions
+        .reduce((acc, s) => {
+          if (!acc.has(s.type)) {
+            acc.set(s.type, []);
+          }
+          acc.get(s.type)!.push({ ...s, endingHere: false }); // Copy the suggestion without endingHere
+          return acc;
+        }, new Map<SuggestionType, (Suggestion & { endingHere: boolean })[]>());
 
       this.suggestionList.set(position, new Map(prev));
     }
@@ -638,8 +642,6 @@ export class TrackChanges
     const startPos = this.text.getPosition(index);
     const existing = this.getSuggestionsInternal(startPos);
 
-    console.log("Existing Suggestion", existing);
-
     // If the insertion is a suggestion and not part of an existing insertion
     // suggestion of the same user, create a new suggestion
     if (
@@ -671,6 +673,86 @@ export class TrackChanges
     }
   }
 
+  /**
+   * Returns all currently active and for the UI relevant suggestions.
+   * E.g. if there are multiple delete suggestions from the same user,
+   * only the latest one is returned.
+   * @returns
+   */
+  public getActiveSuggestions(): Suggestion[] {
+    const suggestionTraces = new Map<
+      SuggestionId,
+      { suggestion: Suggestion & { endingHere: boolean }; position: Position }[]
+    >();
+
+    for (const [_index, dataPoint, position] of this.suggestionList.entries()) {
+      const allSuggestionsAtPosition = Array.from(dataPoint.values()).flat();
+
+      const deleteSuggestionsByUser = new Map<
+        string,
+        (Suggestion & { endingHere: boolean })[]
+      >();
+      const otherSuggestions: (Suggestion & { endingHere: boolean })[] = [];
+
+      for (const s of allSuggestionsAtPosition) {
+        if (s.description === SuggestionDescription.DELETE_SUGGESTION) {
+          if (!deleteSuggestionsByUser.has(s.userId)) {
+            deleteSuggestionsByUser.set(s.userId, []);
+          }
+          deleteSuggestionsByUser.get(s.userId)!.push(s);
+        } else {
+          otherSuggestions.push(s);
+        }
+      }
+
+      const winningDeleteSuggestions: (Suggestion & {
+        endingHere: boolean;
+      })[] = [];
+      for (const userSuggestions of deleteSuggestionsByUser.values()) {
+        if (userSuggestions.length > 0) {
+          // Die 'wins'-Methode ermittelt den neuesten Vorschlag basierend auf Lamport-Zeitstempeln.
+          const winner = userSuggestions.reduce((a, b) =>
+            this.wins(a, b) ? a : b
+          );
+          winningDeleteSuggestions.push(winner);
+        }
+      }
+
+      const filteredSuggestions = [
+        ...otherSuggestions,
+        ...winningDeleteSuggestions,
+      ].filter((s) => s.action === SuggestionAction.ADDITION);
+
+      for (const s of filteredSuggestions) {
+        if (!suggestionTraces.has(s.id)) {
+          suggestionTraces.set(s.id, []);
+        }
+        suggestionTraces.get(s.id)!.push({
+          suggestion: s,
+          position,
+        });
+      }
+    }
+
+    const finalSuggestions: Suggestion[] = [];
+    for (const traces of suggestionTraces.values()) {
+      const startPosition = traces[0].position;
+      const definitiveSuggestionData = traces[traces.length - 1].suggestion;
+      const endTrace = traces.find((trace) => trace.suggestion.endingHere);
+
+      const reconstructedSuggestion: Suggestion = {
+        ...definitiveSuggestionData,
+        startPosition: startPosition,
+        endPosition: endTrace ? endTrace.position : null,
+      };
+
+      delete (reconstructedSuggestion as any).endingHere;
+      finalSuggestions.push(reconstructedSuggestion);
+    }
+
+    return finalSuggestions;
+  }
+
   delete(index: number, count: number, isSuggestion: boolean) {
     // Case 1: Not a suggestion, just delete the text and exit.
     if (!isSuggestion) {
@@ -686,8 +768,7 @@ export class TrackChanges
     }
 
     // Case 3: Create a new delete suggestion
-    const startPos = this.text.getPosition(index);
-    this.createDeleteSuggestion(index, count, startPos);
+    this.createDeleteSuggestion(index, count);
   }
 
   /**
@@ -745,20 +826,20 @@ export class TrackChanges
    * from the same user are present, the suggestion grows by their size
    * (i.e. "they get merged")
    */
-  private createDeleteSuggestion(
-    index: number,
-    count: number,
-    startPos: Position
-  ) {
+  private createDeleteSuggestion(index: number, count: number) {
+    console.log(
+      `Creating delete suggestion at index ${index} with count ${count}`
+    );
+
     // Find the "outermost" previous and next delete suggestions.
     const prevSuggestion = this.findAdjacentDeleteSuggestion(
       index > 0 ? this.text.getPosition(index - 1) : null,
       "previous"
     );
     const nextSuggestion =
-      index + 1 < this.text.length
+      index + count < this.text.length
         ? this.findAdjacentDeleteSuggestion(
-            this.text.getPosition(index + 1),
+            this.text.getPosition(index + count),
             "next"
           )
         : undefined;
@@ -766,7 +847,7 @@ export class TrackChanges
     // Determine the final start and end positions for the new/merged suggestion.
     const finalStartPosition = prevSuggestion
       ? prevSuggestion.startPosition
-      : startPos;
+      : this.text.getPosition(index);
 
     const endOfDeletionIndex = index + count - 1;
     let finalEndPosition = this.text.getPosition(endOfDeletionIndex);
@@ -816,6 +897,11 @@ export class TrackChanges
         s.userId === this.userId
     );
 
+    console.log(
+      `Found ${candidates.length} candidates for ${direction} delete suggestion at position ${this.text.indexOfPosition(position)}`,
+      candidates
+    );
+
     if (candidates.length === 0) {
       return undefined;
     }
@@ -827,6 +913,11 @@ export class TrackChanges
         // Find the suggestion that starts the earliest.
         const bestIndex = this.text.indexOfPosition(best.startPosition);
         const currentIndex = this.text.indexOfPosition(current.startPosition);
+
+        console.log(
+          `Comparing ${bestIndex} with ${currentIndex} for previous direction`
+        );
+
         return currentIndex < bestIndex ? current : best;
       } else {
         // direction === 'next'
@@ -837,19 +928,23 @@ export class TrackChanges
         const currentEndIndex = current.endPosition
           ? this.text.indexOfPosition(current.endPosition)
           : -1;
+
+        console.log(
+          `Comparing ${bestEndIndex} with ${currentEndIndex} for next direction`
+        );
+
         return currentEndIndex > bestEndIndex ? current : best;
       }
     });
   }
 
-  // TODO: Index is only needed for performance reasons. Maybe find a better approach?
-  acceptSuggestion(index: number, id: SuggestionId) {
-    const position = this.text.getPosition(index);
+  // TODO: Position is only needed for performance reasons. Maybe find a better approach?
+  acceptSuggestion(position: Position, id: SuggestionId) {
     const data = this.suggestionList.getByPosition(position);
 
     const existing = Array.from(data?.values() || [])
       .flat()
-      .find((s) => s.id === id);
+      .find((s) => s.id === id && s.action === SuggestionAction.ADDITION);
 
     if (!existing) {
       throw new Error("No suggestion with this id at this position found.");
@@ -865,15 +960,25 @@ export class TrackChanges
       startPosition: existing.startPosition,
       endPosition: existing.endPosition,
     });
+
+    if (existing.description === SuggestionDescription.DELETE_SUGGESTION) {
+      this.text.delete(
+        this.text.indexOfPosition(existing.startPosition),
+        (existing.endPosition
+          ? this.text.indexOfPosition(existing.endPosition, "left")
+          : this.text.length) -
+          this.text.indexOfPosition(existing.startPosition) +
+          1
+      );
+    }
   }
 
-  declineSuggestion(index: number, id: SuggestionId) {
-    const position = this.text.getPosition(index);
+  declineSuggestion(position: Position, id: SuggestionId) {
     const data = this.suggestionList.getByPosition(position);
 
     const existing = Array.from(data?.values() || [])
       .flat()
-      .find((s) => s.id === id);
+      .find((s) => s.id === id && s.action === SuggestionAction.ADDITION);
 
     if (!existing) {
       throw new Error("No suggestion with this id at this position found.");
@@ -889,6 +994,16 @@ export class TrackChanges
       startPosition: existing.startPosition,
       endPosition: existing.endPosition,
     });
+
+    if (existing.description === SuggestionDescription.INSERT_SUGGESTION) {
+      this.text.delete(
+        this.text.indexOfPosition(existing.startPosition),
+        (existing.endPosition
+          ? this.text.indexOfPosition(existing.endPosition, "right")
+          : this.text.length) -
+          this.text.indexOfPosition(existing.startPosition)
+      );
+    }
   }
 
   addComment(startIndex: number, endIndex: number, comment: string) {
@@ -907,16 +1022,12 @@ export class TrackChanges
         `endIndex ${endIndex} is less than startIndex ${startIndex}`
       );
     }
-    if (endIndex === startIndex) {
-      // Trivial span.
-      return;
-    }
 
     this.suggestionLog.add({
       type: SuggestionType.COMMENT,
       action: SuggestionAction.ADDITION,
       description: SuggestionDescription.ADD_COMMENT,
-      endClosed: false,
+      endClosed: true,
       userId: this.userId,
       startPosition: this.text.getPosition(startIndex),
       endPosition: this.text.getPosition(endIndex),
@@ -924,8 +1035,7 @@ export class TrackChanges
     });
   }
 
-  removeComment(index: number, id: SuggestionId) {
-    const position = this.text.getPosition(index);
+  removeComment(position: Position, id: SuggestionId) {
     const data = this.suggestionList.getByPosition(position);
 
     const existing = Array.from(data?.values() || [])
@@ -940,10 +1050,11 @@ export class TrackChanges
       type: SuggestionType.COMMENT,
       action: SuggestionAction.REMOVAL,
       description: SuggestionDescription.REMOVE_COMMENT,
-      endClosed: false,
+      endClosed: true,
       userId: this.userId,
       startPosition: existing.startPosition,
       endPosition: existing.endPosition,
+      dependentOn: existing.id,
     });
   }
 

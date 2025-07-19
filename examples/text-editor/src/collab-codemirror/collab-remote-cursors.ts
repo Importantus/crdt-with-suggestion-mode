@@ -75,22 +75,24 @@ export const trackChangesRemoteCursors = ViewPlugin.fromClass(
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet) {
         const config = update.state.facet(trackChangesFacet)
+        const docLength = config.doc.content.length
 
         const selection = update.state.selection.main
-        const cursors = config.toCollabCursors(selection.anchor, selection.head)
+        const cursors = config.toCollabCursors(
+          Math.min(selection.anchor, docLength),
+          Math.min(selection.head, docLength),
+        )
         const viewing = config.presence?.getOurs()?.viewing ?? false
 
-        setTimeout(() => {
-          config.presence?.setOurs({
-            userId: config.userId,
-            replicaId: config.doc.runtime.replicaID,
-            viewing,
-            selection: {
-              document: config.doc.id,
-              anchor: cursors.anchor,
-              head: cursors.head,
-            },
-          })
+        config.presence?.setOurs({
+          userId: config.userId,
+          replicaId: config.doc.runtime.replicaID,
+          viewing,
+          selection: {
+            document: config.doc.id,
+            anchor: cursors.anchor,
+            head: cursors.head,
+          },
         })
       }
 
@@ -104,6 +106,7 @@ export const trackChangesRemoteCursors = ViewPlugin.fromClass(
     buildDecorations(view: EditorView, states: readonly PresenceState[]): DecorationSet {
       const config = view.state.facet(trackChangesFacet)
       const decorations = []
+      const docLength = config.doc.content.length
 
       for (const state of states) {
         if (
@@ -119,8 +122,8 @@ export const trackChangesRemoteCursors = ViewPlugin.fromClass(
 
         if (anchorPos === undefined || headPos === undefined) continue
 
-        const from = Math.min(anchorPos, headPos)
-        const to = Math.max(anchorPos, headPos)
+        const from = Math.min(Math.min(anchorPos, headPos), docLength)
+        const to = Math.min(Math.max(anchorPos, headPos), docLength)
         const color = getUserColor(state.userId, 0.3)
 
         if (from !== to) {

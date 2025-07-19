@@ -72,7 +72,6 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
           startPos: suggestion.startPosition,
           endPos: suggestion.endPosition,
         })
-        // Schedule decoration update asynchronously
         this.updateDecorations(view)
       })
 
@@ -93,9 +92,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       }, new Map<SuggestionId, { suggestion: Suggestion; startPos: Position; endPos: Position | null }>())
 
       // Initial render of decorations
-      setTimeout(() => {
-        this.updateDecorations(view)
-      })
+      this.updateDecorations(view)
     }
 
     /**
@@ -104,9 +101,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
      */
     update(update: ViewUpdate) {
       if (update.docChanged || update.viewportChanged) {
-        setTimeout(() => {
-          this.updateDecorations(update.view)
-        })
+        this.updateDecorations(update.view)
       }
     }
 
@@ -139,7 +134,11 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
 
       // Update the decoration set and force a redraw
       this.decorations = Decoration.set(decorations, true)
-      view.dispatch({ effects: [] })
+      setTimeout(() => {
+        view.dispatch({
+          effects: [],
+        })
+      })
     }
   },
   {

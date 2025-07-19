@@ -73,17 +73,13 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
           endPos: suggestion.endPosition,
         })
         // Schedule decoration update asynchronously
-        setTimeout(() => {
-          this.updateDecorations(view)
-        })
+        this.updateDecorations(view)
       })
 
       // Subscribe to removal of suggestions
       config.doc.content.on('SuggestionRemoved', (event) => {
         this.activeSuggestions.delete(event.suggestion.id)
-        setTimeout(() => {
-          this.updateDecorations(view)
-        })
+        this.updateDecorations(view)
       })
 
       // Initialize map with pre-existing active suggestions

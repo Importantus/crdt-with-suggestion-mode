@@ -15,7 +15,6 @@ interface CRDTUpdate {
   from: number
   to?: number // Only for delete
   text?: string // Only for insert
-  isSuggestion: boolean
 }
 
 export const crdtUpdateEffect = StateEffect.define<CRDTUpdate>()
@@ -31,7 +30,6 @@ export const collabInputHandler = EditorState.transactionFilter.of((tr) => {
 
   // Check if it’s a user text change
   if ((tr.docChanged && tr.isUserEvent('input')) || tr.isUserEvent('delete')) {
-    const isSuggestion = tr.state.field(dynamicFlagsField).suggestionMode
     const effects: StateEffect<any>[] = []
     let isDeletion = false
 
@@ -45,7 +43,6 @@ export const collabInputHandler = EditorState.transactionFilter.of((tr) => {
             type: 'delete',
             from: fromA,
             to: toA,
-            isSuggestion,
           }),
         )
       }
@@ -56,7 +53,6 @@ export const collabInputHandler = EditorState.transactionFilter.of((tr) => {
             type: 'insert',
             from: fromA,
             text,
-            isSuggestion,
           }),
         )
       }
@@ -94,19 +90,17 @@ export const collabSync = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
+      const isSuggestion = this.view.state.field(dynamicFlagsField).suggestionMode
+
       for (const tr of update.transactions) {
         for (const effect of tr.effects) {
           if (effect.is(crdtUpdateEffect)) {
             const crdtUpdate = effect.value
             if (crdtUpdate.type === 'insert' && crdtUpdate.text) {
-              this.config.doc.content.insert(
-                crdtUpdate.from,
-                crdtUpdate.text,
-                crdtUpdate.isSuggestion,
-              )
+              this.config.doc.content.insert(crdtUpdate.from, crdtUpdate.text, isSuggestion)
             } else if (crdtUpdate.type === 'delete' && crdtUpdate.to) {
               const length = crdtUpdate.to - crdtUpdate.from
-              this.config.doc.content.delete(crdtUpdate.from, length, crdtUpdate.isSuggestion)
+              this.config.doc.content.delete(crdtUpdate.from, length, isSuggestion)
             }
           }
         }
@@ -131,7 +125,6 @@ export const collabSync = ViewPlugin.fromClass(
       this.unsubscribe.push(
         this.docContent.on('Delete', (event) => {
           setTimeout(() => {
-            console.log('Delete event:', event)
             this.view.dispatch({
               changes: { from: event.index, to: event.index + event.values.length },
               selection: event.meta.isLocalOp ? { anchor: event.index } : undefined,

@@ -22,8 +22,8 @@ function addComment() {
   const content = documentStore.document?.content
   if (!content) return
   // Get the current selection start index
-  const startPosition = collabStore.ownSelection?.anchor
-  const endPosition = collabStore.ownSelection?.head
+  const startPosition = collabStore.presence.get(collabStore.replicaId)?.selection?.anchor
+  const endPosition = collabStore.presence.get(collabStore.replicaId)?.selection?.head
   console.log('Start position:', startPosition, 'End position:', endPosition)
   if (startPosition === undefined || endPosition === undefined) return
 
@@ -70,7 +70,7 @@ onMounted(() => {
       </div>
       <div class="flex items-center gap-2 z-10">
         <div class="flex items-center shrink-0 mr-2">
-          <div v-for="user in Array.from(collabStore.presence.values())" :key="user.userId"
+          <div v-for="user in Array.from(collabStore.presence.values()).flat()" :key="user.userId"
             class="rounded-full aspect-square border-box h-9 flex items-center justify-center shrink-0 border-2 text-sm p-2 -ml-2 bg-white"
             :style="`color: ${getUserColor(user.userId, user.viewing ? 1.0 : 0.1)}; border-color: ${getUserColor(user.userId, user.viewing ? 1.0 : 0.1)}`">
             {{ user.userId.slice(0, 2) }}

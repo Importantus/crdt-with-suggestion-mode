@@ -1,7 +1,7 @@
 /**
  * Written with the help of AI.
  */
-import { CRuntime, type Cursor } from '@collabs/collabs'
+import { CRuntime } from '@collabs/collabs'
 import { TabSyncNetwork } from '@collabs/tab-sync'
 import { defineStore } from 'pinia'
 import { v4 as uuidv4 } from 'uuid'
@@ -47,6 +47,11 @@ export const useCollabStore = defineStore('collab', () => {
   const currentUserId = ref<string>('')
 
   /**
+   * Replica ID for the current user, used for presence tracking.
+   */
+  const replicaId = ref<string>('')
+
+  /**
    * Eine reaktive Map aller Dokumente in der Session für die UI.
    * Key: DocumentID, Value: DocumentMeta
    */
@@ -58,16 +63,6 @@ export const useCollabStore = defineStore('collab', () => {
    */
   const presence = reactive<Map<string, PresenceState>>(new Map())
 
-  /***
-   * Die aktuelle Selektion des Benutzers.
-   * Wird von der CRDT-Bibliothek aktualisiert und von der UI verwendet.
-   */
-  const ownSelection = ref<{
-    document: DocumentID
-    anchor: Cursor
-    head: Cursor
-  } | null>(null)
-
   /**
    * Die ID des aktuell vom Benutzer ausgewählten Dokuments.
    */
@@ -78,7 +73,7 @@ export const useCollabStore = defineStore('collab', () => {
   /**
    * Initialisiert die gesamte Kollaborations-Umgebung.
    * Erstellt die Collabs-Laufzeitumgebung, das Netzwerk und die Hauptanwendung.
-   * @param docId Eine eindeutige ID für die gesamte Session/das Projekt.
+   * @param docId Eine eindeutige ID für das Projekt.
    */
   function initialize(docId: string = 'default-session') {
     const user = uuidv4()
@@ -92,6 +87,8 @@ export const useCollabStore = defineStore('collab', () => {
     const tabSync = new TabSyncNetwork()
     tabSync.subscribe(runtime, docId)
 
+    replicaId.value = runtime.replicaID
+
     // Event-Listener registrieren, um den Pinia-State zu aktualisieren
     attachEventListeners()
 
@@ -99,6 +96,7 @@ export const useCollabStore = defineStore('collab', () => {
       userId: user,
       viewing: true,
       selection: null,
+      replicaId: replicaId.value,
     })
     app.value.presence.connect()
 
@@ -135,10 +133,10 @@ export const useCollabStore = defineStore('collab', () => {
 
     // Auf Präsenz-Änderungen hören
     app.value.presence.on('Set', (event) => {
-      presence.set(event.key, event.value)
+      presence.set(event.value.replicaId, event.value)
     })
     app.value.presence.on('Delete', (event) => {
-      presence.delete(event.key)
+      presence.delete(event.value.replicaId)
     })
 
     document.addEventListener('visibilitychange', () => {
@@ -207,17 +205,10 @@ export const useCollabStore = defineStore('collab', () => {
       ...presenceUpdate,
     }
 
-    if (newState.selection) {
-      ownSelection.value = {
-        document: newState.selection.document,
-        anchor: newState.selection.anchor,
-        head: newState.selection.head,
-      }
-    }
-
     app.value.presence.setOurs({
       ...newState,
       userId: currentUserId.value,
+      replicaId: replicaId.value,
     })
   }
 
@@ -229,7 +220,6 @@ export const useCollabStore = defineStore('collab', () => {
     activeDocumentId.value = null
     documents.clear()
     presence.clear()
-    ownSelection.value = null
   }
 
   // --- LOGIC / WATCHERS ---
@@ -252,8 +242,8 @@ export const useCollabStore = defineStore('collab', () => {
   ) // 'sync' um race conditions beim schnellen Wechsel zu vermeiden
 
   return {
+    replicaId,
     leaveDocument,
-    ownSelection,
     app,
     isReady,
     currentUserId,

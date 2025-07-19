@@ -8,6 +8,10 @@ import { DocumentID, TrackChangesDocument } from "./c_document";
  */
 export interface PresenceState {
   /**
+   * Unique identifier for the replica of the user in the collaborative session.
+   */
+  replicaId: string;
+  /**
    * Unique identifier for the user. Can be used for user lookup or attribution.
    */
   userId: string;

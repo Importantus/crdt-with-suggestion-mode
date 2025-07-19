@@ -83,6 +83,7 @@ export const trackChangesRemoteCursors = ViewPlugin.fromClass(
         setTimeout(() => {
           config.presence?.setOurs({
             userId: config.userId,
+            replicaId: config.doc.runtime.replicaID,
             viewing,
             selection: {
               document: config.doc.id,

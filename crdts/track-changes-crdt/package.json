@@ -15,7 +15,8 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@collabs/collabs": "^0.13.1"
+    "@collabs/collabs": "^0.13.1",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/chai": "^4.2.14",

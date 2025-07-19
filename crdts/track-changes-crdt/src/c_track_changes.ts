@@ -466,9 +466,12 @@ export class TrackChanges
     }
 
     for (const added of addedMap.values()) {
-      const startIndex = this.text.indexOfPosition(added.new.startPosition);
+      const startIndex = this.text.indexOfPosition(
+        added.new.startPosition,
+        "left"
+      );
       const endIndex = added.new.endPosition
-        ? this.text.indexOfPosition(added.new.endPosition)
+        ? this.text.indexOfPosition(added.new.endPosition, "right")
         : this.text.length;
 
       this.emit("SuggestionAdded", {
@@ -481,9 +484,12 @@ export class TrackChanges
     }
 
     for (const removed of removedMap.values()) {
-      const startIndex = this.text.indexOfPosition(removed.prev.startPosition);
+      const startIndex = this.text.indexOfPosition(
+        removed.prev.startPosition,
+        "left"
+      );
       const endIndex = removed.prev.endPosition
-        ? this.text.indexOfPosition(removed.prev.endPosition)
+        ? this.text.indexOfPosition(removed.prev.endPosition, "right")
         : this.text.length;
 
       this.emit("SuggestionRemoved", {

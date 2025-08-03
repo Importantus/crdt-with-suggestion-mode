@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Cursors } from '@collabs/collabs'
-import { onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { getUserColor } from './collab-codemirror/collab-remote-cursors'
 import Editor from './components/Editor.vue'
 import InputPopup from './components/InputPopup.vue'
@@ -14,8 +14,23 @@ collabStore.initialize()
 
 const documentStore = useDocumentStore()
 
+const container = ref<HTMLElement>()
+const commentPanel = ref<HTMLElement>()
+
 const newName = ref('')
 const newComment = ref('')
+
+const isContainerScrolled = ref(false)
+
+const sortedSuggestions = computed(() => {
+  return Array.from(documentStore.suggestions.values()).sort((a, b) => {
+    const aIdx = documentStore.document?.content.indexOfPosition(a.startPosition, 'left') ?? 0
+    const bIdx = documentStore.document?.content.indexOfPosition(b.startPosition, 'left') ?? 0
+    return aIdx - bIdx
+  })
+})
+
+const suggestionPositions = reactive<Record<string, number>>({})
 
 function addComment() {
   if (!newComment.value.trim()) return
@@ -38,17 +53,68 @@ function addComment() {
   newComment.value = ''
 }
 
+function onContainerScroll(event: Event) {
+  const target = event.target as HTMLElement
+  isContainerScrolled.value = target.scrollTop > 10
+
+  updateSuggestionPositions()
+}
+
+async function updateSuggestionPositions(awaitForNextTick = true) {
+  if (awaitForNextTick) {
+    await nextTick()
+  }
+
+  const rawPositions: { id: string; top: number; height: number }[] = []
+  const contEl = container.value!
+  const contRect = contEl.getBoundingClientRect()
+  const panelEl = commentPanel.value!
+
+  for (const sug of sortedSuggestions.value) {
+    const span = document.querySelector<HTMLElement>(`span[data-suggestion-id="${sug.id}"]`)
+    if (!span) continue
+    const spanRect = span.getBoundingClientRect()
+    const topRel = spanRect.top - contRect.top + contEl.scrollTop
+
+    const commentEl = panelEl.querySelector<HTMLElement>(
+      `[data-suggestion-comment-id="${sug.id}"]`
+    )
+    const commentHeight = commentEl
+      ? commentEl.getBoundingClientRect().height
+      : 0
+
+    rawPositions.push({ id: sug.id, top: topRel, height: commentHeight })
+  }
+
+  rawPositions.sort((a, b) => a.top - b.top)
+  const margin = 8
+  let prevBottom = -Infinity
+
+  for (const { id, top, height } of rawPositions) {
+    const desired = Math.max(top, prevBottom + margin)
+    suggestionPositions[id] = desired
+    prevBottom = desired + height
+  }
+}
+
 onMounted(() => {
   window.addEventListener('beforeunload', () => {
     collabStore.leaveDocument()
   })
+
+  updateSuggestionPositions()
+})
+
+watch(sortedSuggestions, () => {
+  updateSuggestionPositions()
 })
 </script>
 
 <template>
 
-  <body class="bg-gray-100 h-screen px-3 py-4 relative flex flex-col">
-    <div class="w-full flex justify-between items-center relative z-10">
+  <body class="bg-gray-100 h-screen  relative flex flex-col overflow-hidden">
+    <div class="w-full flex justify-between px-3 py-4 items-center relative z-10 transition-all duration-300"
+      :class="{ 'shadow': isContainerScrolled }">
       <div>
         <div class="flex bg-gray-200 rounded-full overflow-hidden">
           <Tab class="first:pl-3" v-for="doc in collabStore.documents.values()" :key="doc.id" :document="doc" />
@@ -107,21 +173,33 @@ onMounted(() => {
           </div>
           <div class="ml-2">Vorschlagen</div>
         </label>
+        <label class="flex items-center cursor-pointer relative bg-gray-200 rounded-full p-2 px-4">
+          <div class="flex items-center relative">
+            <input type="checkbox" v-model="collabStore.connection"
+              class="peer h-5 w-5 bg-gray-100 cursor-pointer transition-all appearance-none rounded border border-slate-300 checked:bg-gray-700 checked:border-gray-700"
+              id="check" />
+            <span
+              class="absolute text-white opacity-0 peer-checked:opacity-100 top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"
+                stroke="currentColor" stroke-width="1">
+                <path fill-rule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clip-rule="evenodd"></path>
+              </svg>
+            </span>
+          </div>
+          <div class="ml-2">Online</div>
+        </label>
       </div>
     </div>
-    <div v-if="documentStore.isDocumentLoaded" class="flex w-full gap-4 mt-4">
+    <div v-if="documentStore.isDocumentLoaded" @scroll="onContainerScroll" ref="container"
+      class="flex h-full w-full px-3 pb-4 gap-4 overflow-auto">
       <Editor class="w-full outline-0 transition-all" />
-      <div class="flex flex-col gap-3 min-w-48 shrink-0">
-        <Suggestion v-for="suggestion in Array.from(documentStore.suggestions.values()).sort((a, b) => {
-          const aStart =
-            documentStore.document?.content.indexOfPosition(a.startPosition, 'left') ?? 0
-          const bStart =
-            documentStore.document?.content.indexOfPosition(b.startPosition, 'left') ?? 0
-
-          return aStart - bStart
-        })" :key="suggestion.id" :suggestion="suggestion" />
-
-        <div v-if="documentStore.suggestions.size === 0" class="flex items-center justify-center h-96">
+      <div class="flex flex-col gap-3 min-w-48 shrink-0 relative" ref="commentPanel">
+        <Suggestion v-for="suggestion in sortedSuggestions" :key="suggestion.id" :suggestion="suggestion"
+          :data-suggestion-comment-id="suggestion.id"
+          :style="{ position: 'absolute', top: suggestionPositions[suggestion.id] + 'px' }" />
+        <div v-if="sortedSuggestions.length === 0" class="flex items-center justify-center h-96">
           <div class="text-gray-500 text-sm text-center">
             Keine Vorschläge vorhanden
           </div>

@@ -23,12 +23,21 @@ export interface DocumentMeta {
 export const useCollabStore = defineStore('collab', () => {
   // --- STATE ---
 
+  const docId = 'default-session'
+  const runtime = new CRuntime()
+
   /**
    * Die zentrale Instanz der Kollaborations-Anwendung.
    * shallowRef wird verwendet, da die Instanz selbst komplex ist und wir nur auf
    * die Neuzuweisung reagieren müssen, nicht auf interne Änderungen.
    */
   const app = shallowRef<TrackChangesApplication | null>(null)
+
+  /**
+   * Das Netzwerk-Objekt für die Kollaboration.
+   * Wird für die Verbindung zwischen verschiedenen Clients verwendet.
+   */
+  const network = shallowRef<TabSyncNetwork | null>(new TabSyncNetwork())
 
   /**
    * Gibt an, ob die Kollaborations-Session initialisiert und bereit ist.
@@ -75,17 +84,14 @@ export const useCollabStore = defineStore('collab', () => {
    * Erstellt die Collabs-Laufzeitumgebung, das Netzwerk und die Hauptanwendung.
    * @param docId Eine eindeutige ID für das Projekt.
    */
-  function initialize(docId: string = 'default-session') {
+  function initialize() {
     const user = uuidv4()
     currentUserId.value = user
 
-    const runtime = new CRuntime()
     const mainApp = runtime.registerCollab('app', (init) => new TrackChangesApplication(init, user))
     app.value = mainApp
 
-    // Netzwerk-Setup (Beispiel mit TabSyncNetwork für lokale Browser-Tab-Synchronisation)
-    const tabSync = new TabSyncNetwork()
-    tabSync.subscribe(runtime, docId)
+    connection.value = true
 
     replicaId.value = runtime.replicaID
 
@@ -222,6 +228,23 @@ export const useCollabStore = defineStore('collab', () => {
     presence.clear()
   }
 
+  // --- COMPUTED ---
+  // A connection variable that can be set to true or false an in the background toggles the connection
+  const connection = ref<boolean>(false)
+  watch(
+    connection,
+    (newValue) => {
+      if (newValue) {
+        network.value?.subscribe(runtime, docId)
+        app.value?.presence.connect()
+      } else {
+        app.value?.presence.disconnect()
+        network.value?.unsubscribe(runtime)
+      }
+    },
+    { immediate: true },
+  )
+
   // --- LOGIC / WATCHERS ---
 
   // Verbindet den Collab-Store mit dem Dokument-Store.
@@ -242,6 +265,7 @@ export const useCollabStore = defineStore('collab', () => {
   ) // 'sync' um race conditions beim schnellen Wechsel zu vermeiden
 
   return {
+    connection,
     replicaId,
     leaveDocument,
     app,

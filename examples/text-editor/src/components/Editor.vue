@@ -150,5 +150,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="border-dotted min-h-96 bg-white shadow rounded-lg overflow-hidden" ref="editorRef"></div>
+  <div class="min-h-96 bg-white shadow rounded-lg h-fit overflow-hidden" ref="editorRef"></div>
 </template>

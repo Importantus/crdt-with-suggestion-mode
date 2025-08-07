@@ -6,42 +6,42 @@ import {
   ViewUpdate,
 } from '@codemirror/view'
 import { type Position } from '@collabs/collabs'
-import { type Suggestion, SuggestionDescription, type SuggestionId } from 'track-changes-crdt'
+import { type Annotation, AnnotationDescription, type AnnotationId } from 'track-changes-crdt'
 import { trackChangesFacet } from './collab-config'
 
-const suggestionInsertClass = 'cm-suggestion-insert'
-const suggestionDeleteClass = 'cm-suggestion-delete'
+const annotationInsertClass = 'cm-annotation-insert'
+const annotationDeleteClass = 'cm-annotation-delete'
 const commentClass = 'cm-comment-range'
 
 /**
- * Converts a Suggestion object into a CodeMirror Decoration.
- * Applies a CSS class and data attribute based on suggestion type.
+ * Converts a Annotation object into a CodeMirror Decoration.
+ * Applies a CSS class and data attribute based on annotation type.
  *
- * @param suggestion - The suggestion metadata including id and description.
+ * @param annotation - The annotation metadata including id and description.
  * @returns A Decoration marking the suggested range in the editor.
  */
-function suggestionToDecoration(suggestion: Suggestion): Decoration {
+function annotationToDecoration(annotation: Annotation): Decoration {
   let className = ''
-  switch (suggestion.description) {
-    case SuggestionDescription.INSERT_SUGGESTION:
-      className = suggestionInsertClass
+  switch (annotation.description) {
+    case AnnotationDescription.INSERT_SUGGESTION:
+      className = annotationInsertClass
       break
-    case SuggestionDescription.DELETE_SUGGESTION:
-      className = suggestionDeleteClass
+    case AnnotationDescription.DELETE_SUGGESTION:
+      className = annotationDeleteClass
       break
-    case SuggestionDescription.ADD_COMMENT:
+    case AnnotationDescription.ADD_COMMENT:
       className = commentClass
       break
   }
   return Decoration.mark({
     class: className,
-    attributes: { 'data-suggestion-id': suggestion.id },
+    attributes: { 'data-annotation-id': annotation.id },
   })
 }
 
 /**
- * A CodeMirror ViewPlugin that tracks active suggestions and updates decorations accordingly.
- * Stores suggestions by position rather than index to handle collaborative edits.
+ * A CodeMirror ViewPlugin that tracks active annotations and updates decorations accordingly.
+ * Stores annotations by position rather than index to handle collaborative edits.
  */
 export const trackChangesDecorations = ViewPlugin.fromClass(
   class {
@@ -49,47 +49,47 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
     decorations: DecorationSet = Decoration.none
 
     /**
-     * Map of active suggestions keyed by suggestion ID.
-     * Each entry holds the suggestion data and its start/end positions.
+     * Map of active annotations keyed by annotation ID.
+     * Each entry holds the annotation data and its start/end positions.
      */
-    private activeSuggestions = new Map<
-      SuggestionId,
-      { suggestion: Suggestion; startPos: Position; endPos: Position | null }
+    private activeAnnotations = new Map<
+      AnnotationId,
+      { annotation: Annotation; startPos: Position; endPos: Position | null }
     >()
 
     /**
-     * Initializes the plugin: loads existing suggestions and subscribes to updates.
+     * Initializes the plugin: loads existing annotations and subscribes to updates.
      * @param view - The EditorView instance this plugin is attached to.
      */
     constructor(view: EditorView) {
       const config = view.state.facet(trackChangesFacet)
 
-      // Subscribe to addition of new suggestions
-      config.doc.content.on('SuggestionAdded', (event) => {
-        const { suggestion } = event
-        this.activeSuggestions.set(suggestion.id, {
-          suggestion,
-          startPos: suggestion.startPosition,
-          endPos: suggestion.endPosition,
+      // Subscribe to addition of new annotations
+      config.doc.content.on('AnnotationAdded', (event) => {
+        const { annotation } = event
+        this.activeAnnotations.set(annotation.id, {
+          annotation,
+          startPos: annotation.startPosition,
+          endPos: annotation.endPosition,
         })
         this.updateDecorations(view)
       })
 
-      // Subscribe to removal of suggestions
-      config.doc.content.on('SuggestionRemoved', (event) => {
-        this.activeSuggestions.delete(event.suggestion.id)
+      // Subscribe to removal of annotations
+      config.doc.content.on('AnnotationRemoved', (event) => {
+        this.activeAnnotations.delete(event.annotation.id)
         this.updateDecorations(view)
       })
 
-      // Initialize map with pre-existing active suggestions
-      this.activeSuggestions = config.doc.content.getActiveSuggestions().reduce((map, item) => {
+      // Initialize map with pre-existing active annotations
+      this.activeAnnotations = config.doc.content.getActiveAnnotations().reduce((map, item) => {
         map.set(item.id, {
-          suggestion: item,
+          annotation: item,
           startPos: item.startPosition,
           endPos: item.endPosition,
         })
         return map
-      }, new Map<SuggestionId, { suggestion: Suggestion; startPos: Position; endPos: Position | null }>())
+      }, new Map<AnnotationId, { annotation: Annotation; startPos: Position; endPos: Position | null }>())
 
       // Initial render of decorations
       this.updateDecorations(view)
@@ -106,7 +106,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
     }
 
     /**
-     * Computes and applies decorations for all active suggestions.
+     * Computes and applies decorations for all active annotations.
      * Translates stored positions to current document indices.
      * @param view - The EditorView used to dispatch decoration updates.
      */
@@ -115,20 +115,20 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       const content = config.doc.content
       const decorations = []
 
-      for (const item of this.activeSuggestions.values()) {
+      for (const item of this.activeAnnotations.values()) {
         const startIndex = content.indexOfPosition(item.startPos, 'left')
         if (startIndex === -1) continue // Skip if position no longer valid
 
         let endIndex = item.endPos ? content.indexOfPosition(item.endPos, 'right') : content.length
         if (endIndex === -1) continue
 
-        // Extend range if the suggestion end is closed
-        if (item.suggestion.endClosed && endIndex < content.length) {
+        // Extend range if the annotation end is closed
+        if (item.annotation.endClosed && endIndex < content.length) {
           endIndex += 1
         }
 
         if (startIndex < endIndex) {
-          decorations.push(suggestionToDecoration(item.suggestion).range(startIndex, endIndex))
+          decorations.push(annotationToDecoration(item.annotation).range(startIndex, endIndex))
         }
       }
 
@@ -147,15 +147,15 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
 )
 
 /**
- * Defines CSS styles for suggestion highlights and comments in the editor.
+ * Defines CSS styles for annotation highlights and comments in the editor.
  * Uses a light background and underline/strikethrough to indicate changes.
  */
 export const trackChangesTheme = EditorView.baseTheme({
-  [`& .${suggestionInsertClass}`]: {
+  [`& .${annotationInsertClass}`]: {
     backgroundColor: 'rgba(0, 255, 0, 0.2)',
     textDecoration: 'underline solid #0a0 2px',
   },
-  [`& .${suggestionDeleteClass}`]: {
+  [`& .${annotationDeleteClass}`]: {
     backgroundColor: 'rgba(255, 0, 0, 0.2)',
     textDecoration: 'line-through solid #a00 2px',
   },

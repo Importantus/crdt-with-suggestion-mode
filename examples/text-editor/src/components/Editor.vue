@@ -41,10 +41,10 @@ let view: EditorView | null = null;
 let api: TrackChangesAPI | null = null;
 
 onMounted(() => {
-  watch(() => collabStore.isSuggestionMode, (isSuggestionMode) => {
+  watch(() => collabStore.isAnnotationMode, (isAnnotationMode) => {
     if (view && api) {
-      api.setSuggestionMode(view, isSuggestionMode);
-      console.log('Suggestion mode changed:', isSuggestionMode);
+      api.setAnnotationMode(view, isAnnotationMode);
+      console.log('Annotation mode changed:', isAnnotationMode);
     }
   });
 
@@ -143,7 +143,7 @@ onMounted(() => {
         parent: editorRef.value,
       });
 
-      api.setSuggestionMode(view, collabStore.isSuggestionMode);
+      api.setAnnotationMode(view, collabStore.isAnnotationMode);
     }
   }, { immediate: true });
 });

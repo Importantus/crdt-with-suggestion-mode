@@ -30,7 +30,7 @@ export const collabInputHandler = EditorState.transactionFilter.of((tr) => {
 
   // Check if it’s a user text change
   if ((tr.docChanged && tr.isUserEvent('input')) || tr.isUserEvent('delete')) {
-    const effects: StateEffect<any>[] = []
+    const effects: StateEffect<unknown>[] = []
     let isDeletion = false
 
     tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
@@ -90,17 +90,17 @@ export const collabSync = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
-      const isSuggestion = this.view.state.field(dynamicFlagsField).suggestionMode
+      const isAnnotation = this.view.state.field(dynamicFlagsField).annotationMode
 
       for (const tr of update.transactions) {
         for (const effect of tr.effects) {
           if (effect.is(crdtUpdateEffect)) {
             const crdtUpdate = effect.value
             if (crdtUpdate.type === 'insert' && crdtUpdate.text) {
-              this.config.doc.content.insert(crdtUpdate.from, crdtUpdate.text, isSuggestion)
+              this.config.doc.content.insert(crdtUpdate.from, crdtUpdate.text, isAnnotation)
             } else if (crdtUpdate.type === 'delete' && crdtUpdate.to) {
               const length = crdtUpdate.to - crdtUpdate.from
-              this.config.doc.content.delete(crdtUpdate.from, length, isSuggestion)
+              this.config.doc.content.delete(crdtUpdate.from, length, isAnnotation)
             }
           }
         }

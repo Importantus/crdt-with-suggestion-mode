@@ -2,9 +2,9 @@
 import { Cursors } from '@collabs/collabs'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { getUserColor } from './collab-codemirror/collab-remote-cursors'
+import Annotation from './components/Annotation.vue'
 import Editor from './components/Editor.vue'
 import InputPopup from './components/InputPopup.vue'
-import Suggestion from './components/Suggestion.vue'
 import Tab from './components/Tab.vue'
 import { useCollabStore } from './stores/collab'
 import { useDocumentStore } from './stores/document'
@@ -22,15 +22,15 @@ const newComment = ref('')
 
 const isContainerScrolled = ref(false)
 
-const sortedSuggestions = computed(() => {
-  return Array.from(documentStore.suggestions.values()).sort((a, b) => {
+const sortedAnnotations = computed(() => {
+  return Array.from(documentStore.annotations.values()).sort((a, b) => {
     const aIdx = documentStore.document?.content.indexOfPosition(a.startPosition, 'left') ?? 0
     const bIdx = documentStore.document?.content.indexOfPosition(b.startPosition, 'left') ?? 0
     return aIdx - bIdx
   })
 })
 
-const suggestionPositions = reactive<Record<string, number>>({})
+const annotationPositions = reactive<Record<string, number>>({})
 
 function addComment() {
   if (!newComment.value.trim()) return
@@ -57,10 +57,10 @@ function onContainerScroll(event: Event) {
   const target = event.target as HTMLElement
   isContainerScrolled.value = target.scrollTop > 10
 
-  updateSuggestionPositions()
+  updateAnnotationPositions()
 }
 
-async function updateSuggestionPositions(awaitForNextTick = true) {
+async function updateAnnotationPositions(awaitForNextTick = true) {
   if (awaitForNextTick) {
     await nextTick()
   }
@@ -70,14 +70,14 @@ async function updateSuggestionPositions(awaitForNextTick = true) {
   const contRect = contEl.getBoundingClientRect()
   const panelEl = commentPanel.value!
 
-  for (const sug of sortedSuggestions.value) {
-    const span = document.querySelector<HTMLElement>(`span[data-suggestion-id="${sug.id}"]`)
+  for (const sug of sortedAnnotations.value) {
+    const span = document.querySelector<HTMLElement>(`span[data-annotation-id="${sug.id}"]`)
     if (!span) continue
     const spanRect = span.getBoundingClientRect()
     const topRel = spanRect.top - contRect.top + contEl.scrollTop
 
     const commentEl = panelEl.querySelector<HTMLElement>(
-      `[data-suggestion-comment-id="${sug.id}"]`
+      `[data-annotation-comment-id="${sug.id}"]`
     )
     const commentHeight = commentEl
       ? commentEl.getBoundingClientRect().height
@@ -92,7 +92,7 @@ async function updateSuggestionPositions(awaitForNextTick = true) {
 
   for (const { id, top, height } of rawPositions) {
     const desired = Math.max(top, prevBottom + margin)
-    suggestionPositions[id] = desired
+    annotationPositions[id] = desired
     prevBottom = desired + height
   }
 }
@@ -102,11 +102,11 @@ onMounted(() => {
     collabStore.leaveDocument()
   })
 
-  updateSuggestionPositions()
+  updateAnnotationPositions()
 })
 
-watch(sortedSuggestions, () => {
-  updateSuggestionPositions()
+watch(sortedAnnotations, () => {
+  updateAnnotationPositions()
 })
 </script>
 
@@ -158,7 +158,7 @@ watch(sortedSuggestions, () => {
         </InputPopup>
         <label class="flex items-center cursor-pointer relative bg-gray-200 rounded-full p-2 px-4">
           <div class="flex items-center relative">
-            <input type="checkbox" v-model="collabStore.isSuggestionMode"
+            <input type="checkbox" v-model="collabStore.isAnnotationMode"
               class="peer h-5 w-5 bg-gray-100 cursor-pointer transition-all appearance-none rounded border border-slate-300 checked:bg-gray-700 checked:border-gray-700"
               id="check" />
             <span
@@ -196,10 +196,10 @@ watch(sortedSuggestions, () => {
       class="flex h-full w-full px-3 pb-4 gap-4 overflow-auto">
       <Editor class="w-full outline-0 transition-all" />
       <div class="flex flex-col gap-3 min-w-48 shrink-0 relative" ref="commentPanel">
-        <Suggestion v-for="suggestion in sortedSuggestions" :key="suggestion.id" :suggestion="suggestion"
-          :data-suggestion-comment-id="suggestion.id"
-          :style="{ position: 'absolute', top: suggestionPositions[suggestion.id] + 'px' }" />
-        <div v-if="sortedSuggestions.length === 0" class="flex items-center justify-center h-96">
+        <Annotation v-for="annotation in sortedAnnotations" :key="annotation.id" :annotation="annotation"
+          :data-annotation-comment-id="annotation.id"
+          :style="{ position: 'absolute', top: annotationPositions[annotation.id] + 'px' }" />
+        <div v-if="sortedAnnotations.length === 0" class="flex items-center justify-center h-96">
           <div class="text-gray-500 text-sm text-center">
             Keine Vorschläge vorhanden
           </div>

@@ -12,16 +12,16 @@ import {
   UpdateMeta,
 } from "@collabs/collabs";
 import {
-  CSuggestionLog,
-  Suggestion,
-  SuggestionAction,
-  SuggestionDescription,
-  SuggestionId,
-  SuggestionType,
-} from "./c_suggestion";
+  Annotation,
+  AnnotationAction,
+  AnnotationDescription,
+  AnnotationId,
+  AnnotationType,
+  CAnnotationLog,
+} from "./c_annotation";
 
 export interface TrackChangesTextInsertEvent extends TextEvent {
-  suggestions: null | Suggestion[];
+  annotations: null | Annotation[];
 }
 
 export interface TrackChangesFormatEvent extends CollabEvent {
@@ -44,16 +44,16 @@ export interface TrackChangesFormatEvent extends CollabEvent {
    */
   author: string;
   /**
-   * The old suggestion of the given range. Undefined for text that is written in editmode and not in an existing suggestion.
+   * The old annotation of the given range. Undefined for text that is written in editmode and not in an existing annotation.
    */
-  oldSuggestion: Suggestion | undefined;
+  oldAnnotation: Annotation | undefined;
   /**
-   * The range's complete new suggestion. Undefined when the oldSuggestion just got removed.
+   * The range's complete new annotation. Undefined when the oldAnnotation just got removed.
    */
-  newSuggestion: Suggestion | undefined;
+  newAnnotation: Annotation | undefined;
 }
 
-export interface TrackChangesSuggestionAddedEvent extends CollabEvent {
+export interface TrackChangesAnnotationAddedEvent extends CollabEvent {
   /**
    * The range's starting index, inclusive.
    *
@@ -71,17 +71,17 @@ export interface TrackChangesSuggestionAddedEvent extends CollabEvent {
    * due to a range growing, this is the id of the range it replaces. Else,
    * this is undefined.
    */
-  replacement: SuggestionId | undefined;
+  replacement: AnnotationId | undefined;
   /**
-   * The new suggestion
+   * The new annotation
    */
-  suggestion: Suggestion;
+  annotation: Annotation;
 }
 
 /**
  * The possible reasons why a suggestion can be removed from a document
  */
-export enum SuggestionRemovalReason {
+export enum AnnotationRemovalReason {
   /**
    * A user accepted the suggestion
    */
@@ -97,9 +97,9 @@ export enum SuggestionRemovalReason {
   REPLACED = "replaced",
 }
 
-export interface TrackChangesSuggestionRemovedEvent extends CollabEvent {
+export interface TrackChangesAnnotationRemovedEvent extends CollabEvent {
   /**
-   * The id of the user who is responsible for removing the suggestion
+   * The id of the user who is responsible for removing the annotation
    */
   author: string;
   /**
@@ -115,28 +115,28 @@ export interface TrackChangesSuggestionRemovedEvent extends CollabEvent {
    */
   endIndex: number;
   /**
-   * The reason why the suggestion was removed
+   * The reason why the annotation was removed
    */
-  reason: SuggestionRemovalReason;
+  reason: AnnotationRemovalReason;
   /**
-   * The suggestion that got removed
+   * The annotation that got removed
    */
-  suggestion: Suggestion;
+  annotation: Annotation;
 }
 
 export interface TrackChangesEventsRecord extends CollabEventsRecord {
   Insert: TrackChangesTextInsertEvent;
   Delete: TextEvent;
   FormatChange: TrackChangesFormatEvent;
-  SuggestionAdded: TrackChangesSuggestionAddedEvent;
-  SuggestionRemoved: TrackChangesSuggestionRemovedEvent;
+  AnnotationAdded: TrackChangesAnnotationAddedEvent;
+  AnnotationRemoved: TrackChangesAnnotationRemovedEvent;
 }
 
 /**
- * As stated in the peritext paper, whenever a format (here: suggestion) changes,
+ * As stated in the peritext paper, whenever a format (here: annotation) changes,
  * there is a datapoint at that position with all currently and onwards applied format data.
- * This is ordered by suggestion type (e.g. comments, suggestions). When applying a new
- * suggestion action, it must be calculated, which suggestions can be replaced:
+ * This is ordered by annotation type (e.g. comments, suggestions). When applying a new
+ * annotation action, it must be calculated, which annotations can be replaced:
  * e.g. if there is an "insertion suggestion" tag and an "accept suggestion" tag
  * is added, the "insertion suggestion" tag is no longer needed.
  *
@@ -145,9 +145,9 @@ export interface TrackChangesEventsRecord extends CollabEventsRecord {
  * (inclusive, i.e., also formatted). If the endClosed flag is set to false,
  * then the end is not part of the range and not formatted.
  */
-type SuggestionDataPoint = Map<
-  SuggestionType,
-  (Suggestion & { endingHere: boolean })[]
+type AnnotationDataPoint = Map<
+  AnnotationType,
+  (Annotation & { endingHere: boolean })[]
 >;
 
 export class TrackChanges
@@ -162,15 +162,15 @@ export class TrackChanges
    */
   private readonly text: CValueList<string>;
   /**
-   * The crdt that is responsible for syncing and storing the suggestion markers
+   * The crdt that is responsible for syncing and storing the annotation markers
    */
-  private readonly suggestionLog: CSuggestionLog;
+  private readonly annotationLog: CAnnotationLog;
 
   /**
-   * This is a not replicated, local view of the suggestionList mapped to their specific text positions.
+   * This is a not replicated, local view of the annotationList mapped to their specific text positions.
    * This is described in the peritext paper.
    */
-  private readonly suggestionList: LocalList<SuggestionDataPoint>;
+  private readonly annotationList: LocalList<AnnotationDataPoint>;
 
   /**
    * The id of the user making the changes
@@ -192,15 +192,15 @@ export class TrackChanges
       (init) => new CValueList<string>(init)
     );
 
-    this.suggestionLog = super.registerCollab(
-      "suggestionLog",
-      (init) => new CSuggestionLog(init)
+    this.annotationLog = super.registerCollab(
+      "annotationLog",
+      (init) => new CAnnotationLog(init)
     );
 
-    this.suggestionList = new LocalList(this.text.totalOrder);
+    this.annotationList = new LocalList(this.text.totalOrder);
 
-    this.suggestionLog.on("Add", (e) =>
-      this.onSuggestionLogAdd(e.suggestion, e.meta)
+    this.annotationLog.on("Add", (e) =>
+      this.onAnnotationLogAdd(e.annotation, e.meta)
     );
 
     this.text.on("Insert", (e) => {
@@ -208,7 +208,7 @@ export class TrackChanges
         index: e.index,
         values: e.values.join(""),
         positions: e.positions,
-        suggestions: this.getSuggestionsInternal(e.positions[0]),
+        annotations: this.getAnnotationsInternal(e.positions[0]),
         meta: e.meta,
       });
     });
@@ -228,32 +228,32 @@ export class TrackChanges
   }
 
   /**
-   * Event handler for the suggestionLog's "Add" event. Orchestrates the
-   * processing of a new suggestion.
+   * Event handler for the annotationLog's "Add" event. Orchestrates the
+   * processing of a new annotation.
    */
-  private onSuggestionLogAdd(suggestion: Suggestion, meta: UpdateMeta) {
-    this.processSuggestion(suggestion, meta);
+  private onAnnotationLogAdd(annotation: Annotation, meta: UpdateMeta) {
+    this.processAnnotation(annotation, meta);
   }
 
   /**
-   * Processes a new suggestion by updating the local state and emitting corresponding events.
+   * Processes a new annotation by updating the local state and emitting corresponding events.
    * This is the main orchestration method.
    *
-   * @param suggestion The new suggestion to process.
+   * @param annotation The new annotation to process.
    * @param meta The update metadata.
    */
-  private processSuggestion(suggestion: Suggestion, meta: UpdateMeta) {
+  private processAnnotation(annotation: Annotation, meta: UpdateMeta) {
     // ---- Step 1: Prepare local state (create data points at the start and end) ----
-    this.createDataPoint(suggestion.startPosition);
-    if (suggestion.endPosition) this.createDataPoint(suggestion.endPosition);
+    this.createDataPoint(annotation.startPosition);
+    if (annotation.endPosition) this.createDataPoint(annotation.endPosition);
 
-    const startIndex = this.suggestionList.indexOfPosition(
-      suggestion.startPosition
+    const startIndex = this.annotationList.indexOfPosition(
+      annotation.startPosition
     );
     const endIndex =
-      suggestion.endPosition === null
-        ? null // If the suggestion is open ended an goes to the end of the document, no ending should be set
-        : this.suggestionList.indexOfPosition(suggestion.endPosition);
+      annotation.endPosition === null
+        ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
+        : this.annotationList.indexOfPosition(annotation.endPosition);
 
     console.log(`Looking trough positions from ${startIndex} to ${endIndex}`);
 
@@ -261,40 +261,40 @@ export class TrackChanges
 
     // The collected changes. This includes
     //
-    // - the actual changes of formatting (e.g. if a char is normal text(no suggestion) and is
-    // inbetween a suggestion-decline range, there is no change
+    // - the actual changes of formatting (e.g. if a char is normal text(no annotation) and is
+    // inbetween a annotation-decline range, there is no change
     // on this particular character and thus it should not be included in
     // an UI event)
     //
-    // - the addition of suggestions
+    // - the addition of annotations
     //
-    // - the ui-relevant removal of suggestions (i.e. if a range grows, it is
+    // - the ui-relevant removal of annotations (i.e. if a range grows, it is
     // replaced with bigger ranges instead of actually mutated the old range is kept.
     // But this is not relevant to the ui, the change relevant for the ui is, that
     // the shorter range is removed and the longer range is inserted.)
     const changes: AggregatedChange[] = [];
 
     console.log(
-      "the suggestionList is",
-      Array.from(this.suggestionList.entries())
+      "the annotationList is",
+      Array.from(this.annotationList.entries())
     );
 
-    // Go trough all datapoints in the givdocumentStore.addComment()en range and add the new suggestion.
-    // If there are existing suggestions that are mutually exclusive with the
-    // new suggestion (i.e. addition with a corresponding removal), remove
-    // them, and discard the suggestion
+    // Go trough all datapoints in the givdocumentStore.addComment()en range and add the new annotation.
+    // If there are existing annotations that are mutually exclusive with the
+    // new annotation (i.e. addition with a corresponding removal), remove
+    // them, and discard the annotation
     for (
       let i = startIndex;
-      i <= (endIndex !== null ? endIndex : this.suggestionList.length - 1); // If no end index is set, the suggestion goes to the end of the document
+      i <= (endIndex !== null ? endIndex : this.annotationList.length - 1); // If no end index is set, the annotation goes to the end of the document
       i++
     ) {
-      const position = this.suggestionList.getPosition(i);
-      const data = this.suggestionList.getByPosition(position)!;
+      const position = this.annotationList.getPosition(i);
+      const data = this.annotationList.getByPosition(position)!;
       const isEnd = i === endIndex;
 
       const change = this.updateDataPointAndCollectChanges(
         data,
-        suggestion,
+        annotation,
         isEnd
       );
 
@@ -305,7 +305,7 @@ export class TrackChanges
 
     // ---- Step 3: Emit events based on the collected changes ----
     if (changes.length > 0) {
-      this.emitEventsFromChanges(changes, suggestion.userId, meta);
+      this.emitEventsFromChanges(changes, annotation.userId, meta);
     }
   }
 
@@ -313,109 +313,109 @@ export class TrackChanges
    * The core logic for a single data point. It mutates the data point
    * and returns a summary of what changed.
    *
-   * @param data The SuggestionDataPoint to update.
-   * @param newSuggestion The suggestion causing the change.
+   * @param data The AnnotationDataPoint to update.
+   * @param newAnnotation The annotation causing the change.
    * @param isEnd Whether this is the last data point in the range.
    * @returns An object summarizing the changes, or null if no change occurred.
    */
   private updateDataPointAndCollectChanges(
-    data: SuggestionDataPoint,
-    newSuggestion: Suggestion,
+    data: AnnotationDataPoint,
+    newAnnotation: Annotation,
     isEnd: boolean
   ): Omit<AggregatedChange, "position"> | null {
-    // All suggestions of the same type as the new suggestion on that position
-    const suggestionsOfType = data.get(newSuggestion.type) || [];
+    // All annotations of the same type as the new annotation on that position
+    const annotationsOfType = data.get(newAnnotation.type) || [];
 
-    const removedSuggestions: SuggestionRemoveInfo[] = [];
-    let addedSuggestion: SuggestionAdditionInfo | null = null;
+    const removedAnnotations: AnnotationRemoveInfo[] = [];
+    let addedAnnotation: AnnotationAdditionInfo | null = null;
 
     let textAction: TextAction | null = null;
-    let oldFormat: Suggestion | undefined = undefined;
-    let newFormat: Suggestion | undefined = undefined;
+    let oldFormat: Annotation | undefined = undefined;
+    let newFormat: Annotation | undefined = undefined;
 
-    const corresponding = suggestionsOfType.find(
+    const corresponding = annotationsOfType.find(
       (s) =>
-        // Get all suggestions with the other action (e.g. addition -> removal)
-        newSuggestion.action !== s.action &&
-        // Get only suggestions that reference the new action or are referenced by it
-        // (e.g. the acceptance of a suggestion only removes the suggestion that it references)
-        (s.dependentOn === newSuggestion.id ||
-          newSuggestion.dependentOn === s.id)
+        // Get all annotations with the other action (e.g. addition -> removal)
+        newAnnotation.action !== s.action &&
+        // Get only annotations that reference the new action or are referenced by it
+        // (e.g. the acceptance of a annotation only removes the annotation that it references)
+        (s.dependentOn === newAnnotation.id ||
+          newAnnotation.dependentOn === s.id)
     );
 
     if (!corresponding) {
-      // Case 1: No direct interaction between existing and new suggestion, the new suggestion is added.
-      // Check if it replaces an existing suggestion (e.g., growing a delete range).
-      const existing = suggestionsOfType.find(
+      // Case 1: No direct interaction between existing and new annotation, the new annotation is added.
+      // Check if it replaces an existing annotation (e.g., growing a delete range).
+      const existing = annotationsOfType.find(
         (s) =>
-          s.description === SuggestionDescription.DELETE_SUGGESTION && // Only deleting ranges can be replaced
-          s.userId === newSuggestion.userId &&
-          s.description === newSuggestion.description &&
-          this.wins(newSuggestion, s)
+          s.description === AnnotationDescription.DELETE_SUGGESTION && // Only deleting ranges can be replaced
+          s.userId === newAnnotation.userId &&
+          s.description === newAnnotation.description &&
+          this.wins(newAnnotation, s)
       ); // This is not commutative, it should be the longest existing range instead of the first. But that would be to expensive to calculate each time, so I hope it works like that too
 
       const replacementId = existing ? existing.id : undefined;
       if (existing) {
-        removedSuggestions.push(
-          ...suggestionsOfType
+        removedAnnotations.push(
+          ...annotationsOfType
             .filter(
               (s) =>
-                s.userId === newSuggestion.userId &&
-                s.description === newSuggestion.description
+                s.userId === newAnnotation.userId &&
+                s.description === newAnnotation.description
             )
             .map((s) => ({
               prev: s,
-              reason: SuggestionRemovalReason.REPLACED,
+              reason: AnnotationRemovalReason.REPLACED,
             }))
         );
       }
 
-      data.set(newSuggestion.type, [
-        ...suggestionsOfType.filter((s) => s !== existing),
-        { ...newSuggestion, endingHere: isEnd },
+      data.set(newAnnotation.type, [
+        ...annotationsOfType.filter((s) => s !== existing),
+        { ...newAnnotation, endingHere: isEnd },
       ]);
 
-      addedSuggestion = { new: newSuggestion, replacement: replacementId };
+      addedAnnotation = { new: newAnnotation, replacement: replacementId };
 
       // A format change only occurs if the range is affected and it wasn't
-      // just a replacement of a visually identical suggestion.
-      if (!existing && (newSuggestion.endClosed || !isEnd)) {
+      // just a replacement of a visually identical annotation.
+      if (!existing && (newAnnotation.endClosed || !isEnd)) {
         oldFormat = undefined;
-        newFormat = newSuggestion;
+        newFormat = newAnnotation;
       }
     } else {
       // Case 2: Interaction detected (e.g., accept/decline).
-      const removalSuggestion =
-        newSuggestion.action === SuggestionAction.REMOVAL
-          ? newSuggestion
+      const removalAnnotation =
+        newAnnotation.action === AnnotationAction.REMOVAL
+          ? newAnnotation
           : corresponding;
-      const otherSuggestion =
-        newSuggestion === removalSuggestion ? corresponding : newSuggestion;
+      const otherAnnotation =
+        newAnnotation === removalAnnotation ? corresponding : newAnnotation;
 
-      if (this.wins(removalSuggestion, otherSuggestion)) {
-        // The removal wins, so the `otherSuggestion` (which is an ADDITION) is removed.
+      if (this.wins(removalAnnotation, otherAnnotation)) {
+        // The removal wins, so the `otherAnnotation` (which is an ADDITION) is removed.
         data.set(
-          newSuggestion.type,
-          suggestionsOfType.filter((s) => s.id !== corresponding.id)
+          newAnnotation.type,
+          annotationsOfType.filter((s) => s.id !== corresponding.id)
         );
 
         const reason =
-          removalSuggestion.description ===
-          SuggestionDescription.DECLINE_SUGGESTION
-            ? SuggestionRemovalReason.DECLINED
-            : SuggestionRemovalReason.ACCEPTED;
-        removedSuggestions.push({ prev: corresponding, reason });
+          removalAnnotation.description ===
+          AnnotationDescription.DECLINE_SUGGESTION
+            ? AnnotationRemovalReason.DECLINED
+            : AnnotationRemovalReason.ACCEPTED;
+        removedAnnotations.push({ prev: corresponding, reason });
 
-        // A format change occurs if the removed suggestion was affecting the format.
-        if (corresponding.action === SuggestionAction.ADDITION) {
+        // A format change occurs if the removed annotation was affecting the format.
+        if (corresponding.action === AnnotationAction.ADDITION) {
           oldFormat = corresponding;
           newFormat = undefined;
         }
 
         // Check for text-deleting side-effects.
         if (
-          reason === SuggestionRemovalReason.ACCEPTED &&
-          corresponding.description === SuggestionDescription.DELETE_SUGGESTION
+          reason === AnnotationRemovalReason.ACCEPTED &&
+          corresponding.description === AnnotationDescription.DELETE_SUGGESTION
         ) {
           textAction = {
             type: "delete",
@@ -426,13 +426,13 @@ export class TrackChanges
       }
     }
 
-    if (removedSuggestions.length === 0 && !addedSuggestion) {
+    if (removedAnnotations.length === 0 && !addedAnnotation) {
       return null;
     }
 
     return {
-      removedSuggestions,
-      addedSuggestion,
+      removedAnnotations,
+      addedAnnotation,
       oldFormat,
       newFormat,
       textAction,
@@ -452,15 +452,15 @@ export class TrackChanges
     author: string,
     meta: UpdateMeta
   ) {
-    // --- 1. Emit SuggestionAdded and SuggestionRemoved events (deduplicated) ---
-    const addedMap = new Map<SuggestionId, SuggestionAdditionInfo>();
-    const removedMap = new Map<SuggestionId, SuggestionRemoveInfo>();
+    // --- 1. Emit AnnotationAdded and AnnotationRemoved events (deduplicated) ---
+    const addedMap = new Map<AnnotationId, AnnotationAdditionInfo>();
+    const removedMap = new Map<AnnotationId, AnnotationRemoveInfo>();
 
     for (const change of changes) {
-      if (change.addedSuggestion) {
-        addedMap.set(change.addedSuggestion.new.id, change.addedSuggestion);
+      if (change.addedAnnotation) {
+        addedMap.set(change.addedAnnotation.new.id, change.addedAnnotation);
       }
-      for (const removed of change.removedSuggestions) {
+      for (const removed of change.removedAnnotations) {
         removedMap.set(removed.prev.id, removed);
       }
     }
@@ -474,12 +474,12 @@ export class TrackChanges
         ? this.text.indexOfPosition(added.new.endPosition, "right")
         : this.text.length;
 
-      this.emit("SuggestionAdded", {
+      this.emit("AnnotationAdded", {
         meta,
         startIndex,
         endIndex,
         replacement: added.replacement,
-        suggestion: added.new,
+        annotation: added.new,
       });
     }
 
@@ -492,13 +492,13 @@ export class TrackChanges
         ? this.text.indexOfPosition(removed.prev.endPosition, "right")
         : this.text.length;
 
-      this.emit("SuggestionRemoved", {
+      this.emit("AnnotationRemoved", {
         startIndex,
         endIndex,
         meta,
         author,
         reason: removed.reason,
-        suggestion: removed.prev,
+        annotation: removed.prev,
       });
     }
 
@@ -507,8 +507,8 @@ export class TrackChanges
       .filter((c) => c.oldFormat !== undefined || c.newFormat !== undefined)
       .map((c) => ({
         index: this.text.indexOfPosition(c.position),
-        oldSuggestion: c.oldFormat,
-        newSuggestion: c.newFormat,
+        oldAnnotation: c.oldFormat,
+        newAnnotation: c.newFormat,
       }))
       .sort((a, b) => a.index - b.index);
 
@@ -520,8 +520,8 @@ export class TrackChanges
       const curr = formatChanges[i];
       const isContiguous = curr.index === prev.index + 1;
       const isSameChange =
-        curr.oldSuggestion?.id === prev.oldSuggestion?.id &&
-        curr.newSuggestion?.id === prev.newSuggestion?.id;
+        curr.oldAnnotation?.id === prev.oldAnnotation?.id &&
+        curr.newAnnotation?.id === prev.newAnnotation?.id;
 
       if (isContiguous && isSameChange) {
         currentGroup.push(curr);
@@ -533,8 +533,8 @@ export class TrackChanges
           startIndex: first.index,
           endIndex: last.index, // TODO check if inclusive ending behaves always correct
           author,
-          oldSuggestion: first.oldSuggestion,
-          newSuggestion: first.newSuggestion,
+          oldAnnotation: first.oldAnnotation,
+          newAnnotation: first.newAnnotation,
           meta,
         });
         // Start a new group
@@ -548,44 +548,44 @@ export class TrackChanges
       startIndex: first.index,
       endIndex: last.index, // TODO check if inclusive ending behaves always correct
       author,
-      oldSuggestion: first.oldSuggestion,
-      newSuggestion: first.newSuggestion,
+      oldAnnotation: first.oldAnnotation,
+      newAnnotation: first.newAnnotation,
       meta,
     });
   }
 
   /**
-   * Returns the currently applied suggestions at a given text position.
+   * Returns the currently applied annotations at a given text position.
    * Open endings are not formatted and thus not included in the returned data.
    *
    * If position is not currently present, returns the formatting that a character
    * at the position would have if present...
    * @param position
    */
-  private getSuggestionsInternal(position: Position): Suggestion[] | null {
-    const dataIndex = this.suggestionList.indexOfPosition(position, "left");
+  private getAnnotationsInternal(position: Position): Annotation[] | null {
+    const dataIndex = this.annotationList.indexOfPosition(position, "left");
     if (dataIndex === -1) {
       return null;
     }
 
-    const dataPos = this.suggestionList.getPosition(dataIndex);
+    const dataPos = this.annotationList.getPosition(dataIndex);
     console.log(
-      `Getting suggestions at position ${dataPos} for position ${position}`
+      `Getting annotations at position ${dataPos} for position ${position}`
     );
-    const data = this.suggestionList.getByPosition(dataPos);
+    const data = this.annotationList.getByPosition(dataPos);
     if (!data) return null;
-    // Flatten all suggestion arrays and
-    const suggestions = Array.from(data.values())
+    // Flatten all annotation arrays and
+    const annotations = Array.from(data.values())
       .flat()
       .filter(
         (s) =>
           !s.endingHere || (dataPos === position && s.endingHere && s.endClosed)
-      ); // only allow suggestions that are not ending here or are ending here and have an endClosed flag
-    return suggestions.length > 0 ? suggestions : null;
+      ); // only allow annotations that are not ending here or are ending here and have an endClosed flag
+    return annotations.length > 0 ? annotations : null;
   }
 
   /**
-   * As stated in the peritext paper, whenever a format (here: suggestion) changes,
+   * As stated in the peritext paper, whenever a format (here: annotation) changes,
    * there is a datapoint at that position with all currently and onwards applied format data.
    *
    * This function creates such a data point if it doesn't already exists, inferring the
@@ -593,70 +593,70 @@ export class TrackChanges
    * @param position The position where to create a data point
    */
   private createDataPoint(position: Position): void {
-    if (this.suggestionList.hasPosition(position)) return;
+    if (this.annotationList.hasPosition(position)) return;
 
     // Gets the next available index of a datapoint to the left. Returns -1 if none is found
-    const prevIndex = this.suggestionList.indexOfPosition(position, "left");
+    const prevIndex = this.annotationList.indexOfPosition(position, "left");
     if (prevIndex === -1) {
-      this.suggestionList.set(position, new Map());
+      this.annotationList.set(position, new Map());
     } else {
-      const prev = Array.from(this.suggestionList.get(prevIndex).values())
+      const prev = Array.from(this.annotationList.get(prevIndex).values())
         .flat()
-        .filter((s) => !s.endingHere) // Dont copy endingHere suggestions
+        .filter((s) => !s.endingHere) // Dont copy endingHere annotations
         .reduce((acc, s) => {
           if (!acc.has(s.type)) {
             acc.set(s.type, []);
           }
-          acc.get(s.type)!.push({ ...s, endingHere: false }); // Copy the suggestion without endingHere
+          acc.get(s.type)!.push({ ...s, endingHere: false }); // Copy the annotation without endingHere
           return acc;
-        }, new Map<SuggestionType, (Suggestion & { endingHere: boolean })[]>());
+        }, new Map<AnnotationType, (Annotation & { endingHere: boolean })[]>());
 
-      this.suggestionList.set(position, new Map(prev));
+      this.annotationList.set(position, new Map(prev));
     }
   }
 
   /**
    * copied from https://github.com/composablesys/collabs/blob/1063c40e98034c0c4767aa79e1d3955424ba1c47/crdts/src/list/c_rich_text.ts#L444
    *
-   * Returns whether suggestionA wins over suggestionB, either in the Lamport
+   * Returns whether annotationA wins over annotationB, either in the Lamport
    * order (with senderID tiebreaker) or because
-   * suggestionB is undefined.
+   * annotationB is undefined.
    *
-   * If suggestionA and suggestionB come from the same transaction, this also
+   * If annotationA and annotationB come from the same transaction, this also
    * returns true. That is okay because we always call wins() in transaction order,
-   * and later suggestions in the same transaction win over
-   * earlier suggestions.
+   * and later annotations in the same transaction win over
+   * earlier annotations.
    */
   private wins(
-    suggestionA: Suggestion,
-    suggestionB: Suggestion | undefined
+    annotationA: Annotation,
+    annotationB: Annotation | undefined
   ): boolean {
-    if (suggestionB === undefined) return true;
-    if (suggestionA.lamport > suggestionB.lamport) return true;
-    if (suggestionA.lamport === suggestionB.lamport) {
-      // In === case, the two suggestions come from the same transaction,
-      // but suggestionA is newer (a later message in the same transaction).
-      if (suggestionA.senderID >= suggestionB.senderID) return true;
+    if (annotationB === undefined) return true;
+    if (annotationA.lamport > annotationB.lamport) return true;
+    if (annotationA.lamport === annotationB.lamport) {
+      // In === case, the two annotations come from the same transaction,
+      // but annotationA is newer (a later message in the same transaction).
+      if (annotationA.senderID >= annotationB.senderID) return true;
     }
     return false;
   }
 
-  insert(index: number, values: string, isSuggestion: boolean): void {
+  insert(index: number, values: string, isAnnotation: boolean): void {
     if (values.length === 0) return;
     this.text.insert(index, ...values);
 
     const startPos = this.text.getPosition(index);
-    const existing = this.getSuggestionsInternal(startPos);
+    const existing = this.getAnnotationsInternal(startPos);
 
-    // If the insertion is a suggestion and not part of an existing insertion
-    // suggestion of the same user, create a new suggestion
+    // If the insertion is a annotation and not part of an existing insertion
+    // annotation of the same user, create a new annotation
     if (
-      isSuggestion &&
+      isAnnotation &&
       !(
         existing &&
         existing.filter(
           (s) =>
-            s.description === SuggestionDescription.INSERT_SUGGESTION &&
+            s.description === AnnotationDescription.INSERT_SUGGESTION &&
             s.userId === this.userId
         ).length > 0
       )
@@ -667,10 +667,10 @@ export class TrackChanges
           ? null
           : this.text.getPosition(index + values.length);
 
-      this.suggestionLog.add({
-        type: SuggestionType.SUGGESTION,
-        action: SuggestionAction.ADDITION,
-        description: SuggestionDescription.INSERT_SUGGESTION,
+      this.annotationLog.add({
+        type: AnnotationType.SUGGESTION,
+        action: AnnotationAction.ADDITION,
+        description: AnnotationDescription.INSERT_SUGGESTION,
         startPosition: startPos,
         endPosition: endPos,
         endClosed: false,
@@ -680,107 +680,107 @@ export class TrackChanges
   }
 
   /**
-   * Returns all currently active and for the UI relevant suggestions.
-   * E.g. if there are multiple delete suggestions from the same user,
+   * Returns all currently active and for the UI relevant annotations.
+   * E.g. if there are multiple delete annotations from the same user,
    * only the latest one is returned.
    * @returns
    */
-  public getActiveSuggestions(): Suggestion[] {
-    const suggestionTraces = new Map<
-      SuggestionId,
-      { suggestion: Suggestion & { endingHere: boolean }; position: Position }[]
+  public getActiveAnnotations(): Annotation[] {
+    const annotationTraces = new Map<
+      AnnotationId,
+      { annotation: Annotation & { endingHere: boolean }; position: Position }[]
     >();
 
-    for (const [_index, dataPoint, position] of this.suggestionList.entries()) {
-      const allSuggestionsAtPosition = Array.from(dataPoint.values()).flat();
+    for (const [_index, dataPoint, position] of this.annotationList.entries()) {
+      const allAnnotationsAtPosition = Array.from(dataPoint.values()).flat();
 
-      const deleteSuggestionsByUser = new Map<
+      const deleteAnnotationsByUser = new Map<
         string,
-        (Suggestion & { endingHere: boolean })[]
+        (Annotation & { endingHere: boolean })[]
       >();
-      const otherSuggestions: (Suggestion & { endingHere: boolean })[] = [];
+      const otherAnnotations: (Annotation & { endingHere: boolean })[] = [];
 
-      for (const s of allSuggestionsAtPosition) {
-        if (s.description === SuggestionDescription.DELETE_SUGGESTION) {
-          if (!deleteSuggestionsByUser.has(s.userId)) {
-            deleteSuggestionsByUser.set(s.userId, []);
+      for (const s of allAnnotationsAtPosition) {
+        if (s.description === AnnotationDescription.DELETE_SUGGESTION) {
+          if (!deleteAnnotationsByUser.has(s.userId)) {
+            deleteAnnotationsByUser.set(s.userId, []);
           }
-          deleteSuggestionsByUser.get(s.userId)!.push(s);
+          deleteAnnotationsByUser.get(s.userId)!.push(s);
         } else {
-          otherSuggestions.push(s);
+          otherAnnotations.push(s);
         }
       }
 
-      const winningDeleteSuggestions: (Suggestion & {
+      const winningDeleteAnnotations: (Annotation & {
         endingHere: boolean;
       })[] = [];
-      for (const userSuggestions of deleteSuggestionsByUser.values()) {
-        if (userSuggestions.length > 0) {
+      for (const userAnnotations of deleteAnnotationsByUser.values()) {
+        if (userAnnotations.length > 0) {
           // Die 'wins'-Methode ermittelt den neuesten Vorschlag basierend auf Lamport-Zeitstempeln.
-          const winner = userSuggestions.reduce((a, b) =>
+          const winner = userAnnotations.reduce((a, b) =>
             this.wins(a, b) ? a : b
           );
-          winningDeleteSuggestions.push(winner);
+          winningDeleteAnnotations.push(winner);
         }
       }
 
-      const filteredSuggestions = [
-        ...otherSuggestions,
-        ...winningDeleteSuggestions,
-      ].filter((s) => s.action === SuggestionAction.ADDITION);
+      const filteredAnnotations = [
+        ...otherAnnotations,
+        ...winningDeleteAnnotations,
+      ].filter((s) => s.action === AnnotationAction.ADDITION);
 
-      for (const s of filteredSuggestions) {
-        if (!suggestionTraces.has(s.id)) {
-          suggestionTraces.set(s.id, []);
+      for (const s of filteredAnnotations) {
+        if (!annotationTraces.has(s.id)) {
+          annotationTraces.set(s.id, []);
         }
-        suggestionTraces.get(s.id)!.push({
-          suggestion: s,
+        annotationTraces.get(s.id)!.push({
+          annotation: s,
           position,
         });
       }
     }
 
-    const finalSuggestions: Suggestion[] = [];
-    for (const traces of suggestionTraces.values()) {
+    const finalAnnotations: Annotation[] = [];
+    for (const traces of annotationTraces.values()) {
       const startPosition = traces[0].position;
-      const definitiveSuggestionData = traces[traces.length - 1].suggestion;
-      const endTrace = traces.find((trace) => trace.suggestion.endingHere);
+      const definitiveAnnotationData = traces[traces.length - 1].annotation;
+      const endTrace = traces.find((trace) => trace.annotation.endingHere);
 
-      const reconstructedSuggestion: Suggestion = {
-        ...definitiveSuggestionData,
+      const reconstructedAnnotation: Annotation = {
+        ...definitiveAnnotationData,
         startPosition: startPosition,
         endPosition: endTrace ? endTrace.position : null,
       };
 
-      delete (reconstructedSuggestion as any).endingHere;
-      finalSuggestions.push(reconstructedSuggestion);
+      delete (reconstructedAnnotation as any).endingHere;
+      finalAnnotations.push(reconstructedAnnotation);
     }
 
-    return finalSuggestions;
+    return finalAnnotations;
   }
 
-  delete(index: number, count: number, isSuggestion: boolean) {
-    // Case 1: Not a suggestion, just delete the text and exit.
-    if (!isSuggestion) {
+  delete(index: number, count: number, isAnnotation: boolean) {
+    // Case 1: Not a annotation, just delete the text and exit.
+    if (!isAnnotation) {
       this.text.delete(index, count);
       return;
     }
 
-    // Case 2: The deletion occurs entirely within a single insertion suggestion
+    // Case 2: The deletion occurs entirely within a single insertion annotation
     // from the same user. In this case, the text is deleted directly.
     if (this.isRangeWithinSameInsertion(index, count, this.userId)) {
       this.text.delete(index, count);
       return;
     }
 
-    // Case 3: Create a new delete suggestion
-    this.createDeleteSuggestion(index, count);
+    // Case 3: Create a new delete annotation
+    this.createDeleteAnnotation(index, count);
   }
 
   /**
    * Checks if a range (from index to index + count) is fully contained
    * within a single INSERT_SUGGESTION from a single user.
-   * "Same suggestion" is identified by matching lamport and senderId.
+   * "Same annotation" is identified by matching lamport and senderId.
    * @returns True if the deletion is within the same user's single insertion.
    */
   private isRangeWithinSameInsertion(
@@ -795,12 +795,12 @@ export class TrackChanges
     const startPos = this.text.getPosition(index);
     const endPos = this.text.getPosition(index + count - 1);
 
-    // Get all relevant user insertion suggestions at the start of the deletion.
+    // Get all relevant user insertion annotations at the start of the deletion.
     const insertionsAtStart = (
-      this.getSuggestionsInternal(startPos) || []
+      this.getAnnotationsInternal(startPos) || []
     ).filter(
       (s) =>
-        s.description === SuggestionDescription.INSERT_SUGGESTION &&
+        s.description === AnnotationDescription.INSERT_SUGGESTION &&
         s.userId === userId
     );
 
@@ -809,72 +809,72 @@ export class TrackChanges
       return false;
     }
 
-    // For efficiency, create a lookup Set of unique identifiers for the suggestions
+    // For efficiency, create a lookup Set of unique identifiers for the annotations
     // found at the start
-    const startSuggestionIds = new Set(insertionsAtStart.map((s) => s.id));
+    const startAnnotationIds = new Set(insertionsAtStart.map((s) => s.id));
 
-    // Get all relevant user insertion suggestions at the end of the deletion.
-    const insertionsAtEnd = (this.getSuggestionsInternal(endPos) || []).filter(
+    // Get all relevant user insertion annotations at the end of the deletion.
+    const insertionsAtEnd = (this.getAnnotationsInternal(endPos) || []).filter(
       (s) =>
-        s.description === SuggestionDescription.INSERT_SUGGESTION &&
+        s.description === AnnotationDescription.INSERT_SUGGESTION &&
         s.userId === userId
     );
 
-    // Check if any suggestion at the end position also exists in our start set.
-    // This confirms the deletion range is bounded by the same suggestion.
-    return insertionsAtEnd.some((endSuggestion) =>
-      startSuggestionIds.has(endSuggestion.id)
+    // Check if any annotation at the end position also exists in our start set.
+    // This confirms the deletion range is bounded by the same annotation.
+    return insertionsAtEnd.some((endAnnotation) =>
+      startAnnotationIds.has(endAnnotation.id)
     );
   }
 
   /**
-   * Creates a new delete suggestion. If adjacent delete suggestions
-   * from the same user are present, the suggestion grows by their size
+   * Creates a new delete annotation. If adjacent delete annotations
+   * from the same user are present, the annotation grows by their size
    * (i.e. "they get merged")
    */
-  private createDeleteSuggestion(index: number, count: number) {
+  private createDeleteAnnotation(index: number, count: number) {
     console.log(
-      `Creating delete suggestion at index ${index} with count ${count}`
+      `Creating delete annotation at index ${index} with count ${count}`
     );
 
-    // Find the "outermost" previous and next delete suggestions.
-    const prevSuggestion = this.findAdjacentDeleteSuggestion(
+    // Find the "outermost" previous and next delete annotations.
+    const prevAnnotation = this.findAdjacentDeleteAnnotation(
       index > 0 ? this.text.getPosition(index - 1) : null,
       "previous"
     );
-    const nextSuggestion =
+    const nextAnnotation =
       index + count < this.text.length
-        ? this.findAdjacentDeleteSuggestion(
+        ? this.findAdjacentDeleteAnnotation(
             this.text.getPosition(index + count),
             "next"
           )
         : undefined;
 
-    // Determine the final start and end positions for the new/merged suggestion.
-    const finalStartPosition = prevSuggestion
-      ? prevSuggestion.startPosition
+    // Determine the final start and end positions for the new/merged annotation.
+    const finalStartPosition = prevAnnotation
+      ? prevAnnotation.startPosition
       : this.text.getPosition(index);
 
     const endOfDeletionIndex = index + count - 1;
     let finalEndPosition = this.text.getPosition(endOfDeletionIndex);
 
-    if (nextSuggestion?.endPosition) {
-      const nextSuggestionEndIndex = this.text.indexOfPosition(
-        nextSuggestion.endPosition
+    if (nextAnnotation?.endPosition) {
+      const nextAnnotationEndIndex = this.text.indexOfPosition(
+        nextAnnotation.endPosition
       );
-      // If the adjacent suggestion extends further than the current deletion,
+      // If the adjacent annotation extends further than the current deletion,
       // adopt its endpoint to merge them.
-      if (nextSuggestionEndIndex > endOfDeletionIndex) {
-        finalEndPosition = nextSuggestion.endPosition;
+      if (nextAnnotationEndIndex > endOfDeletionIndex) {
+        finalEndPosition = nextAnnotation.endPosition;
       }
     }
 
-    // Create the suggestion with the determined positions.
+    // Create the annotation with the determined positions.
     // This call is now identical for all cases.
-    this.suggestionLog.add({
-      type: SuggestionType.SUGGESTION,
-      action: SuggestionAction.ADDITION,
-      description: SuggestionDescription.DELETE_SUGGESTION,
+    this.annotationLog.add({
+      type: AnnotationType.SUGGESTION,
+      action: AnnotationAction.ADDITION,
+      description: AnnotationDescription.DELETE_SUGGESTION,
       startPosition: finalStartPosition,
       endPosition: finalEndPosition,
       endClosed: true,
@@ -883,28 +883,28 @@ export class TrackChanges
   }
 
   /**
-   * Finds the most relevant adjacent delete suggestion at a given position.
-   * The most relevant are the biggest delete suggestions of the same user
+   * Finds the most relevant adjacent delete annotation at a given position.
+   * The most relevant are the biggest delete annotations of the same user
    * @param position The position at which to search. If null, nothing will be found.
-   * @param direction 'previous' looks for the suggestion with the earliest start, 'next' for the one with the latest end.
-   * @returns The found suggestion or undefined.
+   * @param direction 'previous' looks for the annotation with the earliest start, 'next' for the one with the latest end.
+   * @returns The found annotation or undefined.
    */
-  private findAdjacentDeleteSuggestion(
+  private findAdjacentDeleteAnnotation(
     position: Position | null,
     direction: "previous" | "next"
-  ): Suggestion | undefined {
+  ): Annotation | undefined {
     if (!position) {
       return undefined;
     }
 
-    const candidates = (this.getSuggestionsInternal(position) || []).filter(
+    const candidates = (this.getAnnotationsInternal(position) || []).filter(
       (s) =>
-        s.description === SuggestionDescription.DELETE_SUGGESTION &&
+        s.description === AnnotationDescription.DELETE_SUGGESTION &&
         s.userId === this.userId
     );
 
     console.log(
-      `Found ${candidates.length} candidates for ${direction} delete suggestion at position ${this.text.indexOfPosition(position)}`,
+      `Found ${candidates.length} candidates for ${direction} delete annotation at position ${this.text.indexOfPosition(position)}`,
       candidates
     );
 
@@ -916,7 +916,7 @@ export class TrackChanges
     // This is more efficient when you only need to find an extremum.
     return candidates.reduce((best, current) => {
       if (direction === "previous") {
-        // Find the suggestion that starts the earliest.
+        // Find the annotation that starts the earliest.
         const bestIndex = this.text.indexOfPosition(best.startPosition);
         const currentIndex = this.text.indexOfPosition(current.startPosition);
 
@@ -927,7 +927,7 @@ export class TrackChanges
         return currentIndex < bestIndex ? current : best;
       } else {
         // direction === 'next'
-        // Find the suggestion that ends the latest.
+        // Find the annotation that ends the latest.
         const bestEndIndex = best.endPosition
           ? this.text.indexOfPosition(best.endPosition)
           : -1;
@@ -945,21 +945,21 @@ export class TrackChanges
   }
 
   // TODO: Position is only needed for performance reasons. Maybe find a better approach?
-  acceptSuggestion(position: Position, id: SuggestionId) {
-    const data = this.suggestionList.getByPosition(position);
+  acceptSuggestion(position: Position, id: AnnotationId) {
+    const data = this.annotationList.getByPosition(position);
 
     const existing = Array.from(data?.values() || [])
       .flat()
-      .find((s) => s.id === id && s.action === SuggestionAction.ADDITION);
+      .find((s) => s.id === id && s.action === AnnotationAction.ADDITION);
 
     if (!existing) {
-      throw new Error("No suggestion with this id at this position found.");
+      throw new Error("No annotation with this id at this position found.");
     }
 
-    this.suggestionLog.add({
-      type: SuggestionType.SUGGESTION,
-      action: SuggestionAction.REMOVAL,
-      description: SuggestionDescription.ACCEPT_SUGGESTION,
+    this.annotationLog.add({
+      type: AnnotationType.SUGGESTION,
+      action: AnnotationAction.REMOVAL,
+      description: AnnotationDescription.ACCEPT_SUGGESTION,
       endClosed: existing.endClosed,
       userId: this.userId,
       dependentOn: existing.id,
@@ -967,7 +967,7 @@ export class TrackChanges
       endPosition: existing.endPosition,
     });
 
-    if (existing.description === SuggestionDescription.DELETE_SUGGESTION) {
+    if (existing.description === AnnotationDescription.DELETE_SUGGESTION) {
       this.text.delete(
         this.text.indexOfPosition(existing.startPosition),
         (existing.endPosition
@@ -979,21 +979,21 @@ export class TrackChanges
     }
   }
 
-  declineSuggestion(position: Position, id: SuggestionId) {
-    const data = this.suggestionList.getByPosition(position);
+  declineSuggestion(position: Position, id: AnnotationId) {
+    const data = this.annotationList.getByPosition(position);
 
     const existing = Array.from(data?.values() || [])
       .flat()
-      .find((s) => s.id === id && s.action === SuggestionAction.ADDITION);
+      .find((s) => s.id === id && s.action === AnnotationAction.ADDITION);
 
     if (!existing) {
-      throw new Error("No suggestion with this id at this position found.");
+      throw new Error("No annotation with this id at this position found.");
     }
 
-    this.suggestionLog.add({
-      type: SuggestionType.SUGGESTION,
-      action: SuggestionAction.REMOVAL,
-      description: SuggestionDescription.DECLINE_SUGGESTION,
+    this.annotationLog.add({
+      type: AnnotationType.SUGGESTION,
+      action: AnnotationAction.REMOVAL,
+      description: AnnotationDescription.DECLINE_SUGGESTION,
       endClosed: existing.endClosed,
       userId: this.userId,
       dependentOn: existing.id,
@@ -1001,7 +1001,7 @@ export class TrackChanges
       endPosition: existing.endPosition,
     });
 
-    if (existing.description === SuggestionDescription.INSERT_SUGGESTION) {
+    if (existing.description === AnnotationDescription.INSERT_SUGGESTION) {
       this.text.delete(
         this.text.indexOfPosition(existing.startPosition),
         (existing.endPosition
@@ -1029,10 +1029,10 @@ export class TrackChanges
       );
     }
 
-    this.suggestionLog.add({
-      type: SuggestionType.COMMENT,
-      action: SuggestionAction.ADDITION,
-      description: SuggestionDescription.ADD_COMMENT,
+    this.annotationLog.add({
+      type: AnnotationType.COMMENT,
+      action: AnnotationAction.ADDITION,
+      description: AnnotationDescription.ADD_COMMENT,
       endClosed: true,
       userId: this.userId,
       startPosition: this.text.getPosition(startIndex),
@@ -1041,8 +1041,8 @@ export class TrackChanges
     });
   }
 
-  removeComment(position: Position, id: SuggestionId) {
-    const data = this.suggestionList.getByPosition(position);
+  removeComment(position: Position, id: AnnotationId) {
+    const data = this.annotationList.getByPosition(position);
 
     const existing = Array.from(data?.values() || [])
       .flat()
@@ -1052,10 +1052,10 @@ export class TrackChanges
       throw new Error("No comment with this id at this position found.");
     }
 
-    this.suggestionLog.add({
-      type: SuggestionType.COMMENT,
-      action: SuggestionAction.REMOVAL,
-      description: SuggestionDescription.REMOVE_COMMENT,
+    this.annotationLog.add({
+      type: AnnotationType.COMMENT,
+      action: AnnotationAction.REMOVAL,
+      description: AnnotationDescription.REMOVE_COMMENT,
       endClosed: true,
       userId: this.userId,
       startPosition: existing.startPosition,
@@ -1163,14 +1163,14 @@ export class TrackChanges
  */
 interface AggregatedChange {
   position: Position;
-  /** All suggestions that were removed at this position. */
-  removedSuggestions: SuggestionRemoveInfo[];
-  /** The suggestion that was added at this position, if any. */
-  addedSuggestion: SuggestionAdditionInfo | null;
+  /** All annotations that were removed at this position. */
+  removedAnnotations: AnnotationRemoveInfo[];
+  /** The annotation that was added at this position, if any. */
+  addedAnnotation: AnnotationAdditionInfo | null;
   /** The previous format state, for FormatChange events. */
-  oldFormat: Suggestion | undefined;
+  oldFormat: Annotation | undefined;
   /** The new format state, for FormatChange events. */
-  newFormat: Suggestion | undefined;
+  newFormat: Annotation | undefined;
   /** An optional action to be performed on the text content itself. */
   textAction: TextAction | null;
 }
@@ -1186,18 +1186,18 @@ interface TextAction {
 
 /**
  * Internally used representation of a change
- * that removes a suggestion
+ * that removes a annotation
  */
-interface SuggestionRemoveInfo {
-  reason: SuggestionRemovalReason;
-  prev: Suggestion;
+interface AnnotationRemoveInfo {
+  reason: AnnotationRemovalReason;
+  prev: Annotation;
 }
 
 /**
  * Internally used representation of a change
- * that adds a suggestion
+ * that adds a annotation
  */
-interface SuggestionAdditionInfo {
-  replacement: SuggestionId | undefined;
-  new: Suggestion;
+interface AnnotationAdditionInfo {
+  replacement: AnnotationId | undefined;
+  new: Annotation;
 }

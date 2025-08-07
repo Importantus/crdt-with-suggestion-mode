@@ -9,7 +9,7 @@ import { TrackChangesDocument } from 'track-changes-application'
 export interface TrackChangesOptions {
   /**
    * The TrackChangesDocument instance that manages the collaborative document state.
-   * This document is used to track changes, manage suggestions, and handle collaborative editing.
+   * This document is used to track changes, manage annotations, and handle collaborative editing.
    * It should be an instance of TrackChangesDocument from the 'track-changes-application' package.
    * @required
    */

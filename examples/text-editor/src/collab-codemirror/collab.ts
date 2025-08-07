@@ -8,14 +8,14 @@ import { collabInputHandler, collabSync } from './collab-sync'
 import { StateEffect, StateField } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 
-const setSuggestionMode = StateEffect.define<boolean>()
+const setAnnotationMode = StateEffect.define<boolean>()
 
 interface DynamicFlags {
   /**
    * Whether the user is currently in suggesting mode.
-   * In this mode, edits are recorded as suggestions rather than direct changes.
+   * In this mode, edits are recorded as annotations rather than direct changes.
    */
-  suggestionMode: boolean
+  annotationMode: boolean
 }
 
 /**
@@ -24,11 +24,11 @@ interface DynamicFlags {
  */
 export const dynamicFlagsField = StateField.define<DynamicFlags>({
   create() {
-    return { viewing: true, suggestionMode: false }
+    return { viewing: true, annotationMode: false }
   },
   update(flags, tr) {
-    for (let fx of tr.effects) {
-      if (fx.is(setSuggestionMode)) flags = { ...flags, suggestionMode: fx.value }
+    for (const fx of tr.effects) {
+      if (fx.is(setAnnotationMode)) flags = { ...flags, annotationMode: fx.value }
     }
     return flags
   },
@@ -63,7 +63,7 @@ export class TrackChangesAPI {
       // Synchronize CRDT events with the editor state
       collabSync,
 
-      // Render decorations for suggestions and comments
+      // Render decorations for annotations and comments
       trackChangesDecorations,
       trackChangesTheme,
 
@@ -84,12 +84,12 @@ export class TrackChangesAPI {
   }
 
   /**
-   * Toggle suggesting mode on or off. When enabled, edits are recorded as suggestions.
+   * Toggle suggesting mode on or off. When enabled, edits are recorded as annotations.
    * @param view - The CodeMirror EditorView instance.
    * @param on - `true` to enable suggesting mode, `false` to disable.
    */
-  setSuggestionMode(view: EditorView, on: boolean): void {
-    view.dispatch({ effects: setSuggestionMode.of(on) })
+  setAnnotationMode(view: EditorView, on: boolean): void {
+    view.dispatch({ effects: setAnnotationMode.of(on) })
   }
 
   /** Get current flag values */

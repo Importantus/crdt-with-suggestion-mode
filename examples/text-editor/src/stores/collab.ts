@@ -48,7 +48,7 @@ export const useCollabStore = defineStore('collab', () => {
    * Steuert, ob Benutzereingaben als Vorschläge (true) oder
    * direkte Änderungen (false) behandelt werden.
    */
-  const isSuggestionMode = ref<boolean>(false)
+  const isAnnotationMode = ref<boolean>(false)
 
   /**
    * Die ID des aktuellen Benutzers.
@@ -191,8 +191,8 @@ export const useCollabStore = defineStore('collab', () => {
   /**
    * Schaltet den Vorschlagsmodus um.
    */
-  function toggleSuggestionMode() {
-    isSuggestionMode.value = !isSuggestionMode.value
+  function toggleAnnotationMode() {
+    isAnnotationMode.value = !isAnnotationMode.value
   }
 
   /**
@@ -278,8 +278,8 @@ export const useCollabStore = defineStore('collab', () => {
     createDocument,
     removeDocument,
     setActiveDocument,
-    toggleSuggestionMode,
-    isSuggestionMode,
+    toggleAnnotationMode,
+    isAnnotationMode,
     updateMyPresence,
   }
 })

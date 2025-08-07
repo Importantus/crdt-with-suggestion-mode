@@ -24,35 +24,6 @@ export interface TrackChangesTextInsertEvent extends TextEvent {
   annotations: null | Annotation[];
 }
 
-export interface TrackChangesFormatEvent extends CollabEvent {
-  /**
-   * The range's starting index, inclusive.
-   *
-   * The affected characters are `text.slice(startIndex, endIndex)`.
-   */
-  startIndex: number;
-  /**
-   * The range's ending index, exclusive.
-   *
-   * The affected characters are `text.slice(startIndex, endIndex)`.
-   */
-  endIndex: number;
-  /**
-   * The author of that change, e.g:
-   * - when inserting a new suggestion: The user who wrote the text in suggestion mode
-   * - when accepting a suggestion: The user, who accepted the suggestion
-   */
-  author: string;
-  /**
-   * The old annotation of the given range. Undefined for text that is written in editmode and not in an existing annotation.
-   */
-  oldAnnotation: Annotation | undefined;
-  /**
-   * The range's complete new annotation. Undefined when the oldAnnotation just got removed.
-   */
-  newAnnotation: Annotation | undefined;
-}
-
 export interface TrackChangesAnnotationAddedEvent extends CollabEvent {
   /**
    * The range's starting index, inclusive.
@@ -127,7 +98,6 @@ export interface TrackChangesAnnotationRemovedEvent extends CollabEvent {
 export interface TrackChangesEventsRecord extends CollabEventsRecord {
   Insert: TrackChangesTextInsertEvent;
   Delete: TextEvent;
-  FormatChange: TrackChangesFormatEvent;
   AnnotationAdded: TrackChangesAnnotationAddedEvent;
   AnnotationRemoved: TrackChangesAnnotationRemovedEvent;
 }
@@ -255,16 +225,9 @@ export class TrackChanges
         ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
         : this.annotationList.indexOfPosition(annotation.endPosition);
 
-    console.log(`Looking trough positions from ${startIndex} to ${endIndex}`);
-
     // ---- Step 2: Iterate over the affected range and collect changes ----
 
     // The collected changes. This includes
-    //
-    // - the actual changes of formatting (e.g. if a char is normal text(no annotation) and is
-    // inbetween a annotation-decline range, there is no change
-    // on this particular character and thus it should not be included in
-    // an UI event)
     //
     // - the addition of annotations
     //
@@ -274,12 +237,7 @@ export class TrackChanges
     // the shorter range is removed and the longer range is inserted.)
     const changes: AggregatedChange[] = [];
 
-    console.log(
-      "the annotationList is",
-      Array.from(this.annotationList.entries())
-    );
-
-    // Go trough all datapoints in the givdocumentStore.addComment()en range and add the new annotation.
+    // Go trough all datapoints in the given range and add the new annotation.
     // If there are existing annotations that are mutually exclusive with the
     // new annotation (i.e. addition with a corresponding removal), remove
     // them, and discard the annotation
@@ -329,10 +287,6 @@ export class TrackChanges
     const removedAnnotations: AnnotationRemoveInfo[] = [];
     let addedAnnotation: AnnotationAdditionInfo | null = null;
 
-    let textAction: TextAction | null = null;
-    let oldFormat: Annotation | undefined = undefined;
-    let newFormat: Annotation | undefined = undefined;
-
     const corresponding = annotationsOfType.find(
       (s) =>
         // Get all annotations with the other action (e.g. addition -> removal)
@@ -376,13 +330,6 @@ export class TrackChanges
       ]);
 
       addedAnnotation = { new: newAnnotation, replacement: replacementId };
-
-      // A format change only occurs if the range is affected and it wasn't
-      // just a replacement of a visually identical annotation.
-      if (!existing && (newAnnotation.endClosed || !isEnd)) {
-        oldFormat = undefined;
-        newFormat = newAnnotation;
-      }
     } else {
       // Case 2: Interaction detected (e.g., accept/decline).
       const removalAnnotation =
@@ -405,24 +352,6 @@ export class TrackChanges
             ? AnnotationRemovalReason.DECLINED
             : AnnotationRemovalReason.ACCEPTED;
         removedAnnotations.push({ prev: corresponding, reason });
-
-        // A format change occurs if the removed annotation was affecting the format.
-        if (corresponding.action === AnnotationAction.ADDITION) {
-          oldFormat = corresponding;
-          newFormat = undefined;
-        }
-
-        // Check for text-deleting side-effects.
-        if (
-          reason === AnnotationRemovalReason.ACCEPTED &&
-          corresponding.description === AnnotationDescription.DELETE_SUGGESTION
-        ) {
-          textAction = {
-            type: "delete",
-            startPosition: corresponding.startPosition,
-            endPosition: corresponding.endPosition,
-          };
-        }
       }
     }
 
@@ -433,9 +362,6 @@ export class TrackChanges
     return {
       removedAnnotations,
       addedAnnotation,
-      oldFormat,
-      newFormat,
-      textAction,
     };
   }
 
@@ -501,57 +427,6 @@ export class TrackChanges
         annotation: removed.prev,
       });
     }
-
-    // --- 2. Emit FormatChange events (coalesced) ---
-    const formatChanges = changes
-      .filter((c) => c.oldFormat !== undefined || c.newFormat !== undefined)
-      .map((c) => ({
-        index: this.text.indexOfPosition(c.position),
-        oldAnnotation: c.oldFormat,
-        newAnnotation: c.newFormat,
-      }))
-      .sort((a, b) => a.index - b.index);
-
-    if (formatChanges.length === 0) return;
-
-    let currentGroup = [formatChanges[0]];
-    for (let i = 1; i < formatChanges.length; i++) {
-      const prev = formatChanges[i - 1];
-      const curr = formatChanges[i];
-      const isContiguous = curr.index === prev.index + 1;
-      const isSameChange =
-        curr.oldAnnotation?.id === prev.oldAnnotation?.id &&
-        curr.newAnnotation?.id === prev.newAnnotation?.id;
-
-      if (isContiguous && isSameChange) {
-        currentGroup.push(curr);
-      } else {
-        // Emit for the completed group
-        const first = currentGroup[0];
-        const last = currentGroup[currentGroup.length - 1];
-        this.emit("FormatChange", {
-          startIndex: first.index,
-          endIndex: last.index, // TODO check if inclusive ending behaves always correct
-          author,
-          oldAnnotation: first.oldAnnotation,
-          newAnnotation: first.newAnnotation,
-          meta,
-        });
-        // Start a new group
-        currentGroup = [curr];
-      }
-    }
-    // Emit the last group
-    const first = currentGroup[0];
-    const last = currentGroup[currentGroup.length - 1];
-    this.emit("FormatChange", {
-      startIndex: first.index,
-      endIndex: last.index, // TODO check if inclusive ending behaves always correct
-      author,
-      oldAnnotation: first.oldAnnotation,
-      newAnnotation: first.newAnnotation,
-      meta,
-    });
   }
 
   /**
@@ -1167,21 +1042,6 @@ interface AggregatedChange {
   removedAnnotations: AnnotationRemoveInfo[];
   /** The annotation that was added at this position, if any. */
   addedAnnotation: AnnotationAdditionInfo | null;
-  /** The previous format state, for FormatChange events. */
-  oldFormat: Annotation | undefined;
-  /** The new format state, for FormatChange events. */
-  newFormat: Annotation | undefined;
-  /** An optional action to be performed on the text content itself. */
-  textAction: TextAction | null;
-}
-
-/**
- * Describes an action to be performed on the text content, like deletion.
- */
-interface TextAction {
-  type: "delete";
-  startPosition: Position;
-  endPosition: Position | null;
 }
 
 /**

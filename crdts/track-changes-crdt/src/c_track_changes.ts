@@ -195,6 +195,10 @@ export class TrackChanges
     });
   }
 
+  /**
+   * The number of visible characters in the document.
+   * Deleted characters are not counted.
+   */
   get length(): number {
     return this.text.length;
   }
@@ -595,7 +599,16 @@ export class TrackChanges
     return false;
   }
 
-  insert(index: number, values: string, isAnnotation: boolean): void {
+  /**
+   * Inserts a string of characters at a given index.
+   *
+   * @param index The position where to insert the new characters.
+   * @param values The string of characters to insert.
+   * @param isSuggestion If true, the inserted text is marked as an insertion suggestion.
+   * If a suggestion from the same user already exists at the insertion point, the new text is appended to it.
+   * If false, the text is inserted directly as normal content.
+   */
+  insert(index: number, values: string, isSuggestion: boolean): void {
     if (values.length === 0) return;
     this.text.insert(index, ...values);
 
@@ -608,10 +621,10 @@ export class TrackChanges
       // Update the existing annotation to shrink it
       for (const annotation of existing.filter(
         (s) =>
-          (isAnnotation &&
+          (isSuggestion &&
             s.description === AnnotationDescription.INSERT_SUGGESTION &&
             s.userId !== this.userId) ||
-          (!isAnnotation &&
+          (!isSuggestion &&
             s.description === AnnotationDescription.INSERT_SUGGESTION)
       )) {
         const isOnLeftEdge =
@@ -652,7 +665,7 @@ export class TrackChanges
     // If the insertion is a annotation and not part of an existing insertion
     // annotation of the same user, create a new annotation
     if (
-      isAnnotation &&
+      isSuggestion &&
       !(
         existing &&
         existing.filter(
@@ -686,10 +699,10 @@ export class TrackChanges
   }
 
   /**
-   * Returns all currently active and for the UI relevant annotations.
-   * E.g. if there are multiple delete annotations from the same user,
-   * only the latest one is returned.
-   * @returns
+   * Returns an array of all currently active annotations.
+   * This includes all suggestions and comments.
+   *
+   * @returns An array of active addition annotations.
    */
   public getActiveAnnotations(): AdditionAnnotation[] {
     const annotationTraces = new Map<
@@ -769,9 +782,19 @@ export class TrackChanges
     return finalAnnotations as AdditionAnnotation[];
   }
 
-  delete(index: number, count: number, isAnnotation: boolean) {
+  /**
+   * Deletes a number of characters starting from a given index.
+   *
+   * @param index The starting position of the deletion.
+   * @param count The number of characters to delete.
+   * @param isSuggestion If true, the characters are not removed directly. Instead, a deletion
+   * suggestion is created to mark them as deleted. If the deleted range is fully inside an
+   * insertion suggestion of the same user, the characters are deleted directly.
+   * If false, the characters are permanently removed.
+   */
+  delete(index: number, count: number, isSuggestion: boolean) {
     // Case 1: Not a annotation, just delete the text and exit.
-    if (!isAnnotation) {
+    if (!isSuggestion) {
       this.text.delete(index, count);
       return;
     }
@@ -969,6 +992,13 @@ export class TrackChanges
     });
   }
 
+  /**
+   * Accepts a suggestion.
+   * If it is an insertion suggestion, the text becomes normal content.
+   * If it is a deletion suggestion, the marked text is permanently deleted.
+   *
+   * @param id The ID of the annotation to accept.
+   */
   acceptSuggestion(id: AnnotationId) {
     const existing = this.annotationLog.log
       .get(id)
@@ -1003,6 +1033,13 @@ export class TrackChanges
     }
   }
 
+  /**
+   * Declines a suggestion.
+   * If it is an insertion suggestion, the suggested text is deleted.
+   * If it is a deletion suggestion, only the marking is removed and the text remains.
+   *
+   * @param id The ID of the annotation to decline.
+   */
   declineSuggestion(id: AnnotationId) {
     const existing = this.annotationLog.log
       .get(id)
@@ -1037,6 +1074,14 @@ export class TrackChanges
     }
   }
 
+  /**
+   * Adds a comment to a specific range of text.
+   *
+   * @param startIndex The starting index of the text range (inclusive).
+   * @param endIndex The ending index of the text range (inclusive).
+   * @param comment The content of the comment.
+   * @throws If startIndex or endIndex are out of bounds or if endIndex is smaller than startIndex.
+   */
   addComment(startIndex: number, endIndex: number, comment: string) {
     if (startIndex < 0 || startIndex >= this.length) {
       throw new Error(
@@ -1066,6 +1111,11 @@ export class TrackChanges
     } as AdditionAnnotation);
   }
 
+  /**
+   * Removes a comment from the document.
+   *
+   * @param id The ID of the comment to remove.
+   */
   removeComment(id: AnnotationId) {
     this.annotationLog.add({
       type: AnnotationType.COMMENT,

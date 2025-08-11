@@ -42,7 +42,11 @@ export class TrackChangesApplication extends CObject {
   /** Unique identifier for the current user instance. */
   readonly userId: string;
 
-  /** Presence information for all users in the session. */
+  /**
+   * Manages presence information for all users in the session.
+   * Use this property to set your own state (like cursor position and viewing status)
+   * and to subscribe to the states of other users.
+   */
   readonly presence: CPresence<PresenceState>;
   /** Collaborative map of all documents, indexed by DocumentID. */
   readonly documents: CMap<DocumentID, TrackChangesDocument, []>;

@@ -1000,11 +1000,17 @@ export class TrackChanges
    * @param id The ID of the annotation to accept.
    */
   acceptSuggestion(id: AnnotationId) {
-    const existing = this.annotationLog.log
-      .get(id)
-      ?.find((s) => s.action === AnnotationAction.ADDITION) as
-      | AdditionAnnotation
-      | undefined;
+    const history = this.annotationLog.log.get(id);
+
+    const found = history?.find(
+      (s) => s.action === AnnotationAction.ADDITION
+    ) as AdditionAnnotation | undefined;
+
+    const existing = found
+      ? (this.applyUpdateOperations(found, history || []) as
+          | AdditionAnnotation
+          | undefined)
+      : undefined;
 
     this.annotationLog.add({
       type: AnnotationType.SUGGESTION,
@@ -1041,11 +1047,17 @@ export class TrackChanges
    * @param id The ID of the annotation to decline.
    */
   declineSuggestion(id: AnnotationId) {
-    const existing = this.annotationLog.log
-      .get(id)
-      ?.find((s) => s.action === AnnotationAction.ADDITION) as
-      | AdditionAnnotation
-      | undefined;
+    const history = this.annotationLog.log.get(id);
+
+    const found = history?.find(
+      (s) => s.action === AnnotationAction.ADDITION
+    ) as AdditionAnnotation | undefined;
+
+    const existing = found
+      ? (this.applyUpdateOperations(found, history || []) as
+          | AdditionAnnotation
+          | undefined)
+      : undefined;
 
     this.annotationLog.add({
       type: AnnotationType.SUGGESTION,

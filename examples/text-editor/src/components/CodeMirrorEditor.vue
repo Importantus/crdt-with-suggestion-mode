@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { TrackChangesAPI } from '@/collab-codemirror/collab';
 import { useCollabStore } from '@/stores/collab';
 import { useDocumentStore } from '@/stores/document';
 import {
@@ -32,6 +31,7 @@ import {
   rectangularSelection
 } from '@codemirror/view';
 import { ayuLight } from 'thememirror';
+import { TrackChangesAPI } from 'track-changes-codemirror';
 import { onMounted, ref, watch } from 'vue';
 
 const editorRef = ref<HTMLDivElement | null>(null);

@@ -6,7 +6,8 @@
         "server",
         "crdts/track-changes-crdt",
         "crdts/track-changes-application",
-        "examples/text-editor"
+        "examples/text-editor",
+        "examples/track-changes-codemirror"
     ],
     "dependencies": {
         "typedoc": "^0.28.7",

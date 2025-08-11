@@ -8,6 +8,7 @@ import {
   type AnnotationId,
   type DocumentID,
 } from 'track-changes-application'
+import type { AdditionAnnotation } from 'track-changes-crdt/build/esm/c_annotation'
 import { computed, reactive, ref, shallowRef } from 'vue'
 
 // Ein Array, um die "unsubscribe"-Funktionen der Event-Listener zu speichern.
@@ -38,9 +39,9 @@ export const useDocumentStore = defineStore('document', () => {
 
   /**
    * Eine reaktive Map aller aktiven Vorschläge (Annotations) im Dokument.
-   * Key: AnnotationId, Value: Annotation
+   * Key: AnnotationId, Value: AdditionAnnotation
    */
-  const annotations = reactive<Map<AnnotationId, Annotation>>(new Map())
+  const annotations = reactive<Map<AnnotationId, AdditionAnnotation>>(new Map())
 
   // --- COMPUTED ---
   const id = computed<DocumentID | null>(() => document.value?.id ?? null)

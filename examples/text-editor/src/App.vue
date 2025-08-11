@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Cursors } from '@collabs/collabs'
+import { getUserColor } from "track-changes-codemirror"
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { getUserColor } from './collab-codemirror/collab-remote-cursors'
 import Annotation from './components/Annotation.vue'
-import Editor from './components/Editor.vue'
+import Editor from './components/CodeMirrorEditor.vue'
 import InputPopup from './components/InputPopup.vue'
 import Tab from './components/Tab.vue'
 import { useCollabStore } from './stores/collab'
@@ -24,8 +24,8 @@ const isContainerScrolled = ref(false)
 
 const sortedAnnotations = computed(() => {
   return Array.from(documentStore.annotations.values()).sort((a, b) => {
-    const aIdx = documentStore.document?.content.indexOfPosition(a.startPosition, 'left') ?? 0
-    const bIdx = documentStore.document?.content.indexOfPosition(b.startPosition, 'left') ?? 0
+    const aIdx = a.startPosition ? documentStore.document?.content.indexOfPosition(a.startPosition, 'left') ?? 0 : 0
+    const bIdx = b.startPosition ? documentStore.document?.content.indexOfPosition(b.startPosition, 'left') ?? 0 : 0
     return aIdx - bIdx
   })
 })

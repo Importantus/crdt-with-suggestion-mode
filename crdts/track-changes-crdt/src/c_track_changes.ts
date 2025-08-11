@@ -12,12 +12,15 @@ import {
   UpdateMeta,
 } from "@collabs/collabs";
 import {
+  AdditionAnnotation,
   Annotation,
   AnnotationAction,
   AnnotationDescription,
   AnnotationId,
   AnnotationType,
   CAnnotationLog,
+  RemovalAnnotation,
+  UpdateAnnotation,
 } from "./c_annotation";
 
 export interface TrackChangesTextInsertEvent extends TextEvent {
@@ -38,15 +41,9 @@ export interface TrackChangesAnnotationAddedEvent extends CollabEvent {
    */
   endIndex: number;
   /**
-   * When a range grows, it replaces the old and shorter range. If the addition is
-   * due to a range growing, this is the id of the range it replaces. Else,
-   * this is undefined.
-   */
-  replacement: AnnotationId | undefined;
-  /**
    * The new annotation
    */
-  annotation: Annotation;
+  annotation: AdditionAnnotation;
 }
 
 /**
@@ -66,6 +63,11 @@ export enum AnnotationRemovalReason {
    * If this happens, the old and shorter suggestion gets replaced.
    */
   REPLACED = "replaced",
+  /**
+   * The user removed the annotation
+   * This is mainly used for comments
+   */
+  REMOVED = "removed",
 }
 
 export interface TrackChangesAnnotationRemovedEvent extends CollabEvent {
@@ -92,7 +94,7 @@ export interface TrackChangesAnnotationRemovedEvent extends CollabEvent {
   /**
    * The annotation that got removed
    */
-  annotation: Annotation;
+  annotation: AdditionAnnotation;
 }
 
 export interface TrackChangesEventsRecord extends CollabEventsRecord {
@@ -117,7 +119,7 @@ export interface TrackChangesEventsRecord extends CollabEventsRecord {
  */
 type AnnotationDataPoint = Map<
   AnnotationType,
-  (Annotation & { endingHere: boolean })[]
+  (AdditionAnnotation & { endingHere: boolean })[]
 >;
 
 export class TrackChanges
@@ -213,36 +215,199 @@ export class TrackChanges
    * @param meta The update metadata.
    */
   private processAnnotation(annotation: Annotation, meta: UpdateMeta) {
+    const getExistingOps = (key: string) => this.annotationLog.log.get(key);
+    const isRemoval = annotation.action === AnnotationAction.REMOVAL;
+    const isUpdate = annotation.action === AnnotationAction.UPDATE;
+    const isAddition = annotation.action === AnnotationAction.ADDITION;
+
+    // --------- Case 1: REMOVAL ---------
+    if (isRemoval) {
+      const existing = getExistingOps(annotation.dependentOn);
+
+      if (!existing || existing.length === 0) {
+        console.error(
+          "Received removal annotation without existing addition annotations, ignoring"
+        );
+        return;
+      }
+
+      const lastAction = existing[existing.length - 1].action;
+
+      if (lastAction !== AnnotationAction.REMOVAL) {
+        console.warn(
+          `Ignoring removal annotation ${annotation.id} because a newer addition or update operation exists`
+        );
+        return;
+      }
+
+      const additionAnnotation = existing.find(
+        (a) => a.id === annotation.dependentOn
+      ) as AdditionAnnotation | undefined;
+
+      if (!additionAnnotation) {
+        console.warn(
+          `Ignoring removal annotation ${annotation.id} because the corresponding addition annotation does not yet exist`
+        );
+        return;
+      }
+
+      const removalReason =
+        annotation.description === AnnotationDescription.DECLINE_SUGGESTION
+          ? AnnotationRemovalReason.DECLINED
+          : annotation.description === AnnotationDescription.ACCEPT_SUGGESTION
+            ? AnnotationRemovalReason.ACCEPTED
+            : AnnotationRemovalReason.REMOVED;
+
+      this.removeAnnotation(
+        this.applyUpdateOperations(additionAnnotation, existing),
+        meta,
+        removalReason,
+        annotation.userId
+      );
+
+      return;
+    }
+
+    // --------- Case 2: UPDATE ---------
+    if (isUpdate) {
+      const existing = getExistingOps(annotation.dependentOn);
+
+      if (!existing || existing.length === 0) {
+        console.error(
+          "Received update annotation without existing addition annotations, ignoring"
+        );
+        return;
+      }
+
+      if (existing[existing.length - 1].action === AnnotationAction.REMOVAL) {
+        console.warn(
+          `Ignoring update annotation ${annotation.id} because a newer removal operation exists`
+        );
+        return;
+      }
+
+      const additionAnnotation = existing.find(
+        (a) => a.id === annotation.dependentOn
+      ) as AdditionAnnotation | undefined;
+
+      if (!additionAnnotation) {
+        console.error(
+          `Received update annotation ${annotation.id} for non-existing addition annotation ${annotation.dependentOn}, ignoring`
+        );
+        return;
+      }
+
+      const updatedAnnotation = this.applyUpdateOperations(
+        additionAnnotation,
+        existing
+      );
+
+      const relevantUpdates = existing.filter((a) => a.id !== annotation.id);
+      console.log("Relevant updates:", relevantUpdates);
+
+      const existingAnnotation = this.applyUpdateOperations(
+        additionAnnotation,
+        relevantUpdates
+      );
+
+      this.removeAnnotation(
+        existingAnnotation,
+        meta,
+        AnnotationRemovalReason.REPLACED,
+        existingAnnotation.userId
+      );
+
+      this.addAnnotation(updatedAnnotation, meta);
+
+      return;
+    }
+
+    // --------- Case 3: ADDITION ---------
+    if (isAddition) {
+      const existing = getExistingOps(annotation.id);
+
+      if (!existing || existing.length === 0) {
+        console.error(
+          "Received addition annotation without existing annotations, ignoring"
+        );
+        return;
+      }
+
+      if (existing[existing.length - 1].action === AnnotationAction.REMOVAL) {
+        console.warn(
+          `Ignoring addition annotation ${annotation.id} because a newer removal operation exists`
+        );
+        return;
+      }
+
+      this.addAnnotation(
+        this.applyUpdateOperations(annotation, existing),
+        meta
+      );
+    }
+  }
+
+  /**
+   * Applies update operations to an addition annotation.
+   * @param annotation The addition annotation to update.
+   * @param updates The list of update annotations to apply.
+   * @returns The updated addition annotation.
+   */
+  private applyUpdateOperations(
+    annotation: AdditionAnnotation,
+    updates: Annotation[]
+  ) {
+    let newAnnotation = { ...annotation };
+
+    updates
+      .filter((u) => u.action === AnnotationAction.UPDATE)
+      .forEach((u) => {
+        const update = u as UpdateAnnotation;
+        if (update.dependentOn !== annotation.id) {
+          console.warn(
+            `Update annotation ${update.id} does not depend on the addition annotation ${annotation.id}, ignoring`
+          );
+          return;
+        }
+
+        // Apply the update properties to the new annotation
+        newAnnotation = {
+          ...newAnnotation,
+          ...update.updatedProperties,
+        };
+      });
+
+    return newAnnotation;
+  }
+
+  /**
+   * Adds a new addition annotation to the annotationlist and emits the
+   * TrackChangesAnnotationAddedEvent.
+   * @param annotation The annotation to add.
+   * @param meta The update metadata.
+   * @private
+   */
+  private addAnnotation(annotation: AdditionAnnotation, meta: UpdateMeta) {
     // ---- Step 1: Prepare local state (create data points at the start and end) ----
-    this.createDataPoint(annotation.startPosition);
+    this.createDataPoint(
+      annotation.startPosition
+        ? annotation.startPosition
+        : this.text.getPosition(0)
+    );
     if (annotation.endPosition) this.createDataPoint(annotation.endPosition);
 
-    const startIndex = this.annotationList.indexOfPosition(
-      annotation.startPosition
-    );
+    const startIndex =
+      annotation.startPosition === null
+        ? null
+        : this.annotationList.indexOfPosition(annotation.startPosition);
     const endIndex =
       annotation.endPosition === null
         ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
         : this.annotationList.indexOfPosition(annotation.endPosition);
 
-    // ---- Step 2: Iterate over the affected range and collect changes ----
-
-    // The collected changes. This includes
-    //
-    // - the addition of annotations
-    //
-    // - the ui-relevant removal of annotations (i.e. if a range grows, it is
-    // replaced with bigger ranges instead of actually mutated the old range is kept.
-    // But this is not relevant to the ui, the change relevant for the ui is, that
-    // the shorter range is removed and the longer range is inserted.)
-    const changes: AggregatedChange[] = [];
-
     // Go trough all datapoints in the given range and add the new annotation.
-    // If there are existing annotations that are mutually exclusive with the
-    // new annotation (i.e. addition with a corresponding removal), remove
-    // them, and discard the annotation
     for (
-      let i = startIndex;
+      let i = startIndex || 0;
       i <= (endIndex !== null ? endIndex : this.annotationList.length - 1); // If no end index is set, the annotation goes to the end of the document
       i++
     ) {
@@ -250,183 +415,86 @@ export class TrackChanges
       const data = this.annotationList.getByPosition(position)!;
       const isEnd = i === endIndex;
 
-      const change = this.updateDataPointAndCollectChanges(
-        data,
-        annotation,
-        isEnd
-      );
-
-      if (change) {
-        changes.push({ ...change, position });
-      }
-    }
-
-    // ---- Step 3: Emit events based on the collected changes ----
-    if (changes.length > 0) {
-      this.emitEventsFromChanges(changes, annotation.userId, meta);
-    }
-  }
-
-  /**
-   * The core logic for a single data point. It mutates the data point
-   * and returns a summary of what changed.
-   *
-   * @param data The AnnotationDataPoint to update.
-   * @param newAnnotation The annotation causing the change.
-   * @param isEnd Whether this is the last data point in the range.
-   * @returns An object summarizing the changes, or null if no change occurred.
-   */
-  private updateDataPointAndCollectChanges(
-    data: AnnotationDataPoint,
-    newAnnotation: Annotation,
-    isEnd: boolean
-  ): Omit<AggregatedChange, "position"> | null {
-    // All annotations of the same type as the new annotation on that position
-    const annotationsOfType = data.get(newAnnotation.type) || [];
-
-    const removedAnnotations: AnnotationRemoveInfo[] = [];
-    let addedAnnotation: AnnotationAdditionInfo | null = null;
-
-    const corresponding = annotationsOfType.find(
-      (s) =>
-        // Get all annotations with the other action (e.g. addition -> removal)
-        newAnnotation.action !== s.action &&
-        // Get only annotations that reference the new action or are referenced by it
-        // (e.g. the acceptance of a annotation only removes the annotation that it references)
-        (s.dependentOn === newAnnotation.id ||
-          newAnnotation.dependentOn === s.id)
-    );
-
-    if (!corresponding) {
-      // Case 1: No direct interaction between existing and new annotation, the new annotation is added.
-      // Check if it replaces an existing annotation (e.g., growing a delete range).
-      const existing = annotationsOfType.find(
-        (s) =>
-          s.description === AnnotationDescription.DELETE_SUGGESTION && // Only deleting ranges can be replaced
-          s.userId === newAnnotation.userId &&
-          s.description === newAnnotation.description &&
-          this.wins(newAnnotation, s)
-      ); // This is not commutative, it should be the longest existing range instead of the first. But that would be to expensive to calculate each time, so I hope it works like that too
-
-      const replacementId = existing ? existing.id : undefined;
-      if (existing) {
-        removedAnnotations.push(
-          ...annotationsOfType
-            .filter(
-              (s) =>
-                s.userId === newAnnotation.userId &&
-                s.description === newAnnotation.description
-            )
-            .map((s) => ({
-              prev: s,
-              reason: AnnotationRemovalReason.REPLACED,
-            }))
-        );
-      }
-
-      data.set(newAnnotation.type, [
-        ...annotationsOfType.filter((s) => s !== existing),
-        { ...newAnnotation, endingHere: isEnd },
+      data.set(annotation.type, [
+        ...(data.get(annotation.type) || []),
+        { ...annotation, endingHere: isEnd },
       ]);
-
-      addedAnnotation = { new: newAnnotation, replacement: replacementId };
-    } else {
-      // Case 2: Interaction detected (e.g., accept/decline).
-      const removalAnnotation =
-        newAnnotation.action === AnnotationAction.REMOVAL
-          ? newAnnotation
-          : corresponding;
-      const otherAnnotation =
-        newAnnotation === removalAnnotation ? corresponding : newAnnotation;
-
-      if (this.wins(removalAnnotation, otherAnnotation)) {
-        // The removal wins, so the `otherAnnotation` (which is an ADDITION) is removed.
-        data.set(
-          newAnnotation.type,
-          annotationsOfType.filter((s) => s.id !== corresponding.id)
-        );
-
-        const reason =
-          removalAnnotation.description ===
-          AnnotationDescription.DECLINE_SUGGESTION
-            ? AnnotationRemovalReason.DECLINED
-            : AnnotationRemovalReason.ACCEPTED;
-        removedAnnotations.push({ prev: corresponding, reason });
-      }
     }
 
-    if (removedAnnotations.length === 0 && !addedAnnotation) {
-      return null;
-    }
-
-    return {
-      removedAnnotations,
-      addedAnnotation,
-    };
+    this.emit("AnnotationAdded", {
+      startIndex: annotation.startPosition
+        ? this.text.indexOfPosition(annotation.startPosition, "left")
+        : 0,
+      endIndex: annotation.endPosition
+        ? this.text.indexOfPosition(annotation.endPosition, "right")
+        : this.text.length,
+      annotation,
+      meta,
+    });
   }
 
   /**
-   * Takes a list of granular changes and emits the required, user-facing events.
-   * This method handles coalescing of format changes and deduplication of other events.
-   *
-   * @param changes A list of all changes that occurred.
-   * @param author The author of the top-level change.
+   * Removes an annotation from the annotation list and emits the
+   * TrackChangesAnnotationRemovedEvent.
+   * @param annotation The annotation to remove.
    * @param meta The update metadata.
+   * @param reason The reason why the annotation was removed.
+   * @param author The id of the user who is responsible for removing the annotation.
    */
-  private emitEventsFromChanges(
-    changes: AggregatedChange[],
-    author: string,
-    meta: UpdateMeta
+  private removeAnnotation(
+    annotation: AdditionAnnotation,
+    meta: UpdateMeta,
+    reason: AnnotationRemovalReason,
+    author: string
   ) {
-    // --- 1. Emit AnnotationAdded and AnnotationRemoved events (deduplicated) ---
-    const addedMap = new Map<AnnotationId, AnnotationAdditionInfo>();
-    const removedMap = new Map<AnnotationId, AnnotationRemoveInfo>();
+    console.log(
+      `Removing annotation ${annotation.id} from ${annotation.startPosition} to ${annotation.endPosition}`,
+      annotation
+    );
+    const startIndex =
+      annotation.startPosition === null
+        ? null
+        : this.annotationList.indexOfPosition(annotation.startPosition, "left");
+    console.log("Start index:", startIndex);
+    const endIndex =
+      annotation.endPosition === null
+        ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
+        : this.annotationList.indexOfPosition(annotation.endPosition);
 
-    for (const change of changes) {
-      if (change.addedAnnotation) {
-        addedMap.set(change.addedAnnotation.new.id, change.addedAnnotation);
-      }
-      for (const removed of change.removedAnnotations) {
-        removedMap.set(removed.prev.id, removed);
-      }
-    }
+    // Go trough all datapoints in the given range and remove the annotation.
+    for (
+      let i = startIndex || 0;
+      i <= (endIndex !== null ? endIndex : this.annotationList.length - 1); // If no end index is set, the annotation goes to the end of the document
+      i++
+    ) {
+      const position = this.annotationList.getPosition(i);
+      const data = this.annotationList.getByPosition(position)!;
 
-    for (const added of addedMap.values()) {
-      const startIndex = this.text.indexOfPosition(
-        added.new.startPosition,
-        "left"
+      const annotationsOfType = data.get(annotation.type) || [];
+      const updatedAnnotations = annotationsOfType.filter(
+        (s) => s.id !== annotation.id
       );
-      const endIndex = added.new.endPosition
-        ? this.text.indexOfPosition(added.new.endPosition, "right")
-        : this.text.length;
 
-      this.emit("AnnotationAdded", {
-        meta,
-        startIndex,
-        endIndex,
-        replacement: added.replacement,
-        annotation: added.new,
-      });
+      if (updatedAnnotations.length > 0) {
+        data.set(annotation.type, updatedAnnotations);
+      } else {
+        data.delete(annotation.type);
+      }
     }
 
-    for (const removed of removedMap.values()) {
-      const startIndex = this.text.indexOfPosition(
-        removed.prev.startPosition,
-        "left"
-      );
-      const endIndex = removed.prev.endPosition
-        ? this.text.indexOfPosition(removed.prev.endPosition, "right")
-        : this.text.length;
-
-      this.emit("AnnotationRemoved", {
-        startIndex,
-        endIndex,
-        meta,
-        author,
-        reason: removed.reason,
-        annotation: removed.prev,
-      });
-    }
+    // Emit the removal event
+    this.emit("AnnotationRemoved", {
+      startIndex: annotation.startPosition
+        ? this.text.indexOfPosition(annotation.startPosition, "left")
+        : 0,
+      endIndex: annotation.endPosition
+        ? this.text.indexOfPosition(annotation.endPosition, "right")
+        : this.text.length,
+      meta,
+      reason,
+      annotation,
+      author,
+    });
   }
 
   /**
@@ -437,9 +505,20 @@ export class TrackChanges
    * at the position would have if present...
    * @param position
    */
-  private getAnnotationsInternal(position: Position): Annotation[] | null {
-    const dataIndex = this.annotationList.indexOfPosition(position, "left");
-    if (dataIndex === -1) {
+  private getAnnotationsInternal(
+    position: Position
+  ): AdditionAnnotation[] | null {
+    const index = this.text.indexOfPosition(position, "left");
+
+    const dataIndex = this.annotationList.indexOfPosition(
+      position,
+      index === 0 ? "right" : "left"
+    );
+
+    if (
+      dataIndex === -1 ||
+      (index === 0 && dataIndex === this.annotationList.length)
+    ) {
       return null;
     }
 
@@ -484,7 +563,7 @@ export class TrackChanges
           }
           acc.get(s.type)!.push({ ...s, endingHere: false }); // Copy the annotation without endingHere
           return acc;
-        }, new Map<AnnotationType, (Annotation & { endingHere: boolean })[]>());
+        }, new Map<AnnotationType, (AdditionAnnotation & { endingHere: boolean })[]>());
 
       this.annotationList.set(position, new Map(prev));
     }
@@ -523,6 +602,53 @@ export class TrackChanges
     const startPos = this.text.getPosition(index);
     const existing = this.getAnnotationsInternal(startPos);
 
+    console.log(existing, "Existing annotations at insert position:", startPos);
+
+    if (existing) {
+      // Update the existing annotation to shrink it
+      for (const annotation of existing.filter(
+        (s) =>
+          (isAnnotation &&
+            s.description === AnnotationDescription.INSERT_SUGGESTION &&
+            s.userId !== this.userId) ||
+          (!isAnnotation &&
+            s.description === AnnotationDescription.INSERT_SUGGESTION)
+      )) {
+        const isOnLeftEdge =
+          annotation.startPosition &&
+          this.text.indexOfPosition(annotation.startPosition, "left") + 1 ===
+            index; // +1 because we have an open start
+        const isOnRightEdge =
+          annotation.endPosition &&
+          this.text.indexOfPosition(annotation.endPosition, "right") - 1 ===
+            index; // -1 because we have an open end
+
+        const isOnAbsoluteStart = !annotation.startPosition && index === 0;
+
+        const isOnAbsoluteEnd =
+          !annotation.endPosition && index === this.text.length - 1;
+
+        console.log(index, this.text.length);
+
+        this.annotationLog.add({
+          dependentOn: annotation.id,
+          type: AnnotationType.SUGGESTION,
+          action: AnnotationAction.UPDATE,
+          updatedProperties: {
+            ...((isOnLeftEdge || isOnAbsoluteStart) && {
+              startPosition: index >= 0 ? this.text.getPosition(index) : null,
+            }),
+            ...((isOnRightEdge || isOnAbsoluteEnd) && {
+              endPosition:
+                index + values.length - 1 < this.text.length
+                  ? this.text.getPosition(index + values.length - 1)
+                  : null,
+            }),
+          },
+        } as UpdateAnnotation);
+      }
+    }
+
     // If the insertion is a annotation and not part of an existing insertion
     // annotation of the same user, create a new annotation
     if (
@@ -542,15 +668,20 @@ export class TrackChanges
           ? null
           : this.text.getPosition(index + values.length);
 
+      // This is the char before the insertion, so that we can model a growing range (i.e. open start)
+      const actualStartPos =
+        index - 1 >= 0 ? this.text.getPosition(index - 1) : null;
+
       this.annotationLog.add({
         type: AnnotationType.SUGGESTION,
         action: AnnotationAction.ADDITION,
         description: AnnotationDescription.INSERT_SUGGESTION,
-        startPosition: startPos,
+        startPosition: actualStartPos,
         endPosition: endPos,
         endClosed: false,
+        startClosed: false,
         userId: this.userId,
-      });
+      } as AdditionAnnotation);
     }
   }
 
@@ -560,10 +691,13 @@ export class TrackChanges
    * only the latest one is returned.
    * @returns
    */
-  public getActiveAnnotations(): Annotation[] {
+  public getActiveAnnotations(): AdditionAnnotation[] {
     const annotationTraces = new Map<
       AnnotationId,
-      { annotation: Annotation & { endingHere: boolean }; position: Position }[]
+      {
+        annotation: AdditionAnnotation & { endingHere: boolean };
+        position: Position;
+      }[]
     >();
 
     for (const [_index, dataPoint, position] of this.annotationList.entries()) {
@@ -571,9 +705,10 @@ export class TrackChanges
 
       const deleteAnnotationsByUser = new Map<
         string,
-        (Annotation & { endingHere: boolean })[]
+        (AdditionAnnotation & { endingHere: boolean })[]
       >();
-      const otherAnnotations: (Annotation & { endingHere: boolean })[] = [];
+      const otherAnnotations: (AdditionAnnotation & { endingHere: boolean })[] =
+        [];
 
       for (const s of allAnnotationsAtPosition) {
         if (s.description === AnnotationDescription.DELETE_SUGGESTION) {
@@ -586,7 +721,7 @@ export class TrackChanges
         }
       }
 
-      const winningDeleteAnnotations: (Annotation & {
+      const winningDeleteAnnotations: (AdditionAnnotation & {
         endingHere: boolean;
       })[] = [];
       for (const userAnnotations of deleteAnnotationsByUser.values()) {
@@ -621,7 +756,7 @@ export class TrackChanges
       const definitiveAnnotationData = traces[traces.length - 1].annotation;
       const endTrace = traces.find((trace) => trace.annotation.endingHere);
 
-      const reconstructedAnnotation: Annotation = {
+      const reconstructedAnnotation: AdditionAnnotation = {
         ...definitiveAnnotationData,
         startPosition: startPosition,
         endPosition: endTrace ? endTrace.position : null,
@@ -631,7 +766,7 @@ export class TrackChanges
       finalAnnotations.push(reconstructedAnnotation);
     }
 
-    return finalAnnotations;
+    return finalAnnotations as AdditionAnnotation[];
   }
 
   delete(index: number, count: number, isAnnotation: boolean) {
@@ -712,36 +847,47 @@ export class TrackChanges
       `Creating delete annotation at index ${index} with count ${count}`
     );
 
-    // Find the "outermost" previous and next delete annotations.
-    const prevAnnotation = this.findAdjacentDeleteAnnotation(
+    // Find the most relevant adjacent delete annotation before the deletion.
+    let relevantAnnotation = this.findAdjacentDeleteAnnotation(
       index > 0 ? this.text.getPosition(index - 1) : null,
       "previous"
     );
-    const nextAnnotation =
-      index + count < this.text.length
-        ? this.findAdjacentDeleteAnnotation(
-            this.text.getPosition(index + count),
-            "next"
-          )
-        : undefined;
+    let rightGrowing = true; // If we found a previous annotation, this annotation now grows to the right.
 
-    // Determine the final start and end positions for the new/merged annotation.
-    const finalStartPosition = prevAnnotation
-      ? prevAnnotation.startPosition
-      : this.text.getPosition(index);
+    if (!relevantAnnotation) {
+      // If no previous annotation is found, check if the next position has a relevant annotation.
+      relevantAnnotation =
+        index + count < this.text.length
+          ? this.findAdjacentDeleteAnnotation(
+              this.text.getPosition(index + count),
+              "next"
+            )
+          : undefined;
+      rightGrowing = false; // If we found a next annotation, this annotation now grows to the left.
+    }
 
-    const endOfDeletionIndex = index + count - 1;
-    let finalEndPosition = this.text.getPosition(endOfDeletionIndex);
-
-    if (nextAnnotation?.endPosition) {
-      const nextAnnotationEndIndex = this.text.indexOfPosition(
-        nextAnnotation.endPosition
+    // When a adjacent annotation is present, we need to create an updated annotation
+    // that lets the new annotation grow to the left or right.
+    if (relevantAnnotation) {
+      console.log(
+        `Found relevant adjacent delete annotation: ${relevantAnnotation.id}`
       );
-      // If the adjacent annotation extends further than the current deletion,
-      // adopt its endpoint to merge them.
-      if (nextAnnotationEndIndex > endOfDeletionIndex) {
-        finalEndPosition = nextAnnotation.endPosition;
-      }
+
+      this.annotationLog.add({
+        type: AnnotationType.SUGGESTION,
+        action: AnnotationAction.UPDATE,
+        userId: this.userId,
+        updatedProperties: {
+          ...(rightGrowing && {
+            endPosition: this.text.getPosition(index + count - 1),
+          }),
+          ...(!rightGrowing && {
+            startPosition: this.text.getPosition(index),
+          }),
+        },
+        dependentOn: relevantAnnotation.id,
+      } as UpdateAnnotation);
+      return;
     }
 
     // Create the annotation with the determined positions.
@@ -750,11 +896,11 @@ export class TrackChanges
       type: AnnotationType.SUGGESTION,
       action: AnnotationAction.ADDITION,
       description: AnnotationDescription.DELETE_SUGGESTION,
-      startPosition: finalStartPosition,
-      endPosition: finalEndPosition,
+      startPosition: this.text.getPosition(index),
+      endPosition: this.text.getPosition(index + count - 1), // The end position is inclusive, so we need to subtract 1 from the index
       endClosed: true,
       userId: this.userId,
-    });
+    } as AdditionAnnotation);
   }
 
   /**
@@ -767,7 +913,7 @@ export class TrackChanges
   private findAdjacentDeleteAnnotation(
     position: Position | null,
     direction: "previous" | "next"
-  ): Annotation | undefined {
+  ): AdditionAnnotation | undefined {
     if (!position) {
       return undefined;
     }
@@ -792,8 +938,12 @@ export class TrackChanges
     return candidates.reduce((best, current) => {
       if (direction === "previous") {
         // Find the annotation that starts the earliest.
-        const bestIndex = this.text.indexOfPosition(best.startPosition);
-        const currentIndex = this.text.indexOfPosition(current.startPosition);
+        const bestIndex = best.startPosition
+          ? this.text.indexOfPosition(best.startPosition)
+          : 0;
+        const currentIndex = current.startPosition
+          ? this.text.indexOfPosition(current.startPosition)
+          : 0;
 
         console.log(
           `Comparing ${bestIndex} with ${currentIndex} for previous direction`
@@ -819,70 +969,70 @@ export class TrackChanges
     });
   }
 
-  // TODO: Position is only needed for performance reasons. Maybe find a better approach?
-  acceptSuggestion(position: Position, id: AnnotationId) {
-    const data = this.annotationList.getByPosition(position);
-
-    const existing = Array.from(data?.values() || [])
-      .flat()
-      .find((s) => s.id === id && s.action === AnnotationAction.ADDITION);
-
-    if (!existing) {
-      throw new Error("No annotation with this id at this position found.");
-    }
+  acceptSuggestion(id: AnnotationId) {
+    const existing = this.annotationLog.log
+      .get(id)
+      ?.find((s) => s.action === AnnotationAction.ADDITION) as
+      | AdditionAnnotation
+      | undefined;
 
     this.annotationLog.add({
       type: AnnotationType.SUGGESTION,
-      action: AnnotationAction.REMOVAL,
       description: AnnotationDescription.ACCEPT_SUGGESTION,
-      endClosed: existing.endClosed,
+      action: AnnotationAction.REMOVAL,
       userId: this.userId,
-      dependentOn: existing.id,
-      startPosition: existing.startPosition,
-      endPosition: existing.endPosition,
-    });
+      dependentOn: id,
+    } as RemovalAnnotation);
 
-    if (existing.description === AnnotationDescription.DELETE_SUGGESTION) {
+    if (
+      existing &&
+      existing.description === AnnotationDescription.DELETE_SUGGESTION
+    ) {
+      const startIndex = existing.startPosition
+        ? this.text.indexOfPosition(existing.startPosition)
+        : 0;
+
       this.text.delete(
-        this.text.indexOfPosition(existing.startPosition),
+        startIndex,
         (existing.endPosition
           ? this.text.indexOfPosition(existing.endPosition, "left")
           : this.text.length) -
-          this.text.indexOfPosition(existing.startPosition) +
+          startIndex +
           1
       );
     }
   }
 
-  declineSuggestion(position: Position, id: AnnotationId) {
-    const data = this.annotationList.getByPosition(position);
-
-    const existing = Array.from(data?.values() || [])
-      .flat()
-      .find((s) => s.id === id && s.action === AnnotationAction.ADDITION);
-
-    if (!existing) {
-      throw new Error("No annotation with this id at this position found.");
-    }
+  declineSuggestion(id: AnnotationId) {
+    const existing = this.annotationLog.log
+      .get(id)
+      ?.find((s) => s.action === AnnotationAction.ADDITION) as
+      | AdditionAnnotation
+      | undefined;
 
     this.annotationLog.add({
       type: AnnotationType.SUGGESTION,
       action: AnnotationAction.REMOVAL,
       description: AnnotationDescription.DECLINE_SUGGESTION,
-      endClosed: existing.endClosed,
       userId: this.userId,
-      dependentOn: existing.id,
-      startPosition: existing.startPosition,
-      endPosition: existing.endPosition,
-    });
+      dependentOn: id,
+    } as RemovalAnnotation);
 
-    if (existing.description === AnnotationDescription.INSERT_SUGGESTION) {
+    if (
+      existing &&
+      existing.description === AnnotationDescription.INSERT_SUGGESTION
+    ) {
+      const startIndex = existing.startPosition
+        ? this.text.indexOfPosition(existing.startPosition)
+        : 0;
+
       this.text.delete(
-        this.text.indexOfPosition(existing.startPosition),
+        startIndex + 1, // +1 because we have an open start
         (existing.endPosition
           ? this.text.indexOfPosition(existing.endPosition, "right")
           : this.text.length) -
-          this.text.indexOfPosition(existing.startPosition)
+          startIndex -
+          1 // -1 because we have an open start
       );
     }
   }
@@ -913,30 +1063,17 @@ export class TrackChanges
       startPosition: this.text.getPosition(startIndex),
       endPosition: this.text.getPosition(endIndex),
       value: comment,
-    });
+    } as AdditionAnnotation);
   }
 
-  removeComment(position: Position, id: AnnotationId) {
-    const data = this.annotationList.getByPosition(position);
-
-    const existing = Array.from(data?.values() || [])
-      .flat()
-      .find((s) => s.id === id);
-
-    if (!existing) {
-      throw new Error("No comment with this id at this position found.");
-    }
-
+  removeComment(id: AnnotationId) {
     this.annotationLog.add({
       type: AnnotationType.COMMENT,
       action: AnnotationAction.REMOVAL,
       description: AnnotationDescription.REMOVE_COMMENT,
-      endClosed: true,
       userId: this.userId,
-      startPosition: existing.startPosition,
-      endPosition: existing.endPosition,
-      dependentOn: existing.id,
-    });
+      dependentOn: id,
+    } as RemovalAnnotation);
   }
 
   /**
@@ -1031,33 +1168,4 @@ export class TrackChanges
   charAt(index: number): string {
     return this.text.get(index);
   }
-}
-
-/**
- * A summary of all changes that occurred at a single data point.
- */
-interface AggregatedChange {
-  position: Position;
-  /** All annotations that were removed at this position. */
-  removedAnnotations: AnnotationRemoveInfo[];
-  /** The annotation that was added at this position, if any. */
-  addedAnnotation: AnnotationAdditionInfo | null;
-}
-
-/**
- * Internally used representation of a change
- * that removes a annotation
- */
-interface AnnotationRemoveInfo {
-  reason: AnnotationRemovalReason;
-  prev: Annotation;
-}
-
-/**
- * Internally used representation of a change
- * that adds a annotation
- */
-interface AnnotationAdditionInfo {
-  replacement: AnnotationId | undefined;
-  new: Annotation;
 }

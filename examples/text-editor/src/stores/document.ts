@@ -118,12 +118,12 @@ export const useDocumentStore = defineStore('document', () => {
 
   function acceptSuggestion(id: AnnotationId) {
     if (!document.value || !annotations.get(id)) return
-    document.value.content.acceptSuggestion(annotations.get(id)!.startPosition, id)
+    document.value.content.acceptSuggestion(id)
   }
 
   function declineSuggestion(id: AnnotationId) {
     if (!document.value || !annotations.get(id)) return
-    document.value.content.declineSuggestion(annotations.get(id)!.startPosition, id)
+    document.value.content.declineSuggestion(id)
   }
 
   function addComment(startIndex: number, endIndex: number, comment: string) {
@@ -133,7 +133,7 @@ export const useDocumentStore = defineStore('document', () => {
 
   function removeComment(id: AnnotationId) {
     if (!document.value || !annotations.get(id)) return
-    document.value.content.removeComment(annotations.get(id)!.startPosition, id)
+    document.value.content.removeComment(id)
   }
 
   return {

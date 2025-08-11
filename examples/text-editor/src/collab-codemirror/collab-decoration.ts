@@ -6,7 +6,8 @@ import {
   ViewUpdate,
 } from '@codemirror/view'
 import { type Position } from '@collabs/collabs'
-import { type Annotation, AnnotationDescription, type AnnotationId } from 'track-changes-crdt'
+import { AnnotationDescription, type AnnotationId } from 'track-changes-crdt'
+import type { AdditionAnnotation } from 'track-changes-crdt/build/esm/c_annotation'
 import { trackChangesFacet } from './collab-config'
 
 const annotationInsertClass = 'cm-annotation-insert'
@@ -20,7 +21,7 @@ const commentClass = 'cm-comment-range'
  * @param annotation - The annotation metadata including id and description.
  * @returns A Decoration marking the suggested range in the editor.
  */
-function annotationToDecoration(annotation: Annotation): Decoration {
+function annotationToDecoration(annotation: AdditionAnnotation): Decoration {
   let className = ''
   switch (annotation.description) {
     case AnnotationDescription.INSERT_SUGGESTION:
@@ -54,7 +55,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
      */
     private activeAnnotations = new Map<
       AnnotationId,
-      { annotation: Annotation; startPos: Position; endPos: Position | null }
+      { annotation: AdditionAnnotation; startPos: Position | null; endPos: Position | null }
     >()
 
     /**
@@ -89,7 +90,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
           endPos: item.endPosition,
         })
         return map
-      }, new Map<AnnotationId, { annotation: Annotation; startPos: Position; endPos: Position | null }>())
+      }, new Map<AnnotationId, { annotation: AdditionAnnotation; startPos: Position | null; endPos: Position | null }>())
 
       // Initial render of decorations
       this.updateDecorations(view)
@@ -116,7 +117,8 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       const decorations = []
 
       for (const item of this.activeAnnotations.values()) {
-        const startIndex = content.indexOfPosition(item.startPos, 'left')
+        console.debug('Processing annotation:', item.annotation)
+        let startIndex = item.startPos ? content.indexOfPosition(item.startPos, 'left') : 0
         if (startIndex === -1) continue // Skip if position no longer valid
 
         let endIndex = item.endPos ? content.indexOfPosition(item.endPos, 'right') : content.length
@@ -125,6 +127,11 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
         // Extend range if the annotation end is closed
         if (item.annotation.endClosed && endIndex < content.length) {
           endIndex += 1
+        }
+
+        // Reduce range if the start is open
+        if (item.annotation.startClosed === false && item.startPos) {
+          startIndex += 1
         }
 
         if (startIndex < endIndex) {

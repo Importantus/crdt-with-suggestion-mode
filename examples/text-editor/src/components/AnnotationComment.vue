@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { useDocumentStore } from '@/stores/document';
-import { AnnotationDescription, type Annotation } from 'track-changes-application';
+import { AnnotationDescription } from 'track-changes-application';
 import { AnnotationType } from 'track-changes-crdt';
+import type { AdditionAnnotation } from 'track-changes-crdt/build/esm/c_annotation';
 
-const props = defineProps<{ annotation: Annotation }>()
+const props = defineProps<{ annotation: AdditionAnnotation }>()
 const documentStore = useDocumentStore()
 
 function onAnnotationMouseover(id: string) {

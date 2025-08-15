@@ -2,7 +2,7 @@
 import { Cursors } from '@collabs/collabs'
 import { getUserColor } from "track-changes-codemirror"
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import Annotation from './components/Annotation.vue'
+import Annotation from './components/AnnotationComment.vue'
 import Editor from './components/CodeMirrorEditor.vue'
 import InputPopup from './components/InputPopup.vue'
 import Tab from './components/Tab.vue'

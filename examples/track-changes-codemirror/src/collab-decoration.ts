@@ -123,7 +123,6 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       const decorations = [];
 
       for (const item of this.activeAnnotations.values()) {
-        console.debug("Processing annotation:", item.annotation);
         let startIndex = item.startPos
           ? content.indexOfPosition(item.startPos, "left")
           : 0;

@@ -5,6 +5,7 @@ import {
   CTotalOrder,
   ICursorList,
   InitToken,
+  ListEvent,
   LocalList,
   Position,
   TextEvent,
@@ -104,6 +105,11 @@ export interface TrackChangesEventsRecord extends CollabEventsRecord {
   AnnotationRemoved: TrackChangesAnnotationRemovedEvent;
 }
 
+type AnnotationData = AdditionAnnotation & {
+  endingHere: boolean;
+  visible: boolean;
+};
+
 /**
  * As stated in the peritext paper, whenever a format (here: annotation) changes,
  * there is a datapoint at that position with all currently and onwards applied format data.
@@ -117,10 +123,7 @@ export interface TrackChangesEventsRecord extends CollabEventsRecord {
  * (inclusive, i.e., also formatted). If the endClosed flag is set to false,
  * then the end is not part of the range and not formatted.
  */
-type AnnotationDataPoint = Map<
-  AnnotationType,
-  (AdditionAnnotation & { endingHere: boolean })[]
->;
+type AnnotationDataPoint = Map<AnnotationType, AnnotationData[]>;
 
 export class TrackChanges
   extends CObject<TrackChangesEventsRecord>
@@ -172,27 +175,12 @@ export class TrackChanges
     this.annotationList = new LocalList(this.text.totalOrder);
 
     this.annotationLog.on("Add", (e) =>
-      this.onAnnotationLogAdd(e.annotation, e.meta)
+      this.processAnnotation(e.annotation, e.meta)
     );
 
-    this.text.on("Insert", (e) => {
-      this.emit("Insert", {
-        index: e.index,
-        values: e.values.join(""),
-        positions: e.positions,
-        annotations: this.getAnnotationsInternal(e.positions[0]),
-        meta: e.meta,
-      });
-    });
+    this.text.on("Insert", this.onTextInsert.bind(this));
 
-    this.text.on("Delete", (e) => {
-      this.emit("Delete", {
-        index: e.index,
-        values: e.values.join(""),
-        positions: e.positions,
-        meta: e.meta,
-      });
-    });
+    this.text.on("Delete", this.onTextDelete.bind(this));
   }
 
   /**
@@ -203,12 +191,83 @@ export class TrackChanges
     return this.text.length;
   }
 
-  /**
-   * Event handler for the annotationLog's "Add" event. Orchestrates the
-   * processing of a new annotation.
-   */
-  private onAnnotationLogAdd(annotation: Annotation, meta: UpdateMeta) {
-    this.processAnnotation(annotation, meta);
+  private getStartPosition(annotation: AdditionAnnotation): Position {
+    return annotation.startPosition
+      ? annotation.startPosition
+      : this.text.getPosition(0);
+  }
+
+  private getEndPosition(annotation: AdditionAnnotation): Position {
+    return annotation.endPosition
+      ? annotation.endPosition
+      : this.text.getPosition(this.text.length - 1);
+  }
+
+  private getStartIndex(
+    annotation: AdditionAnnotation,
+    searchDir?: "none" | "left" | "right"
+  ): number {
+    return this.text.indexOfPosition(
+      this.getStartPosition(annotation),
+      searchDir
+    );
+  }
+
+  private getEndIndex(
+    annotation: AdditionAnnotation,
+    searchDir?: "none" | "left" | "right"
+  ): number {
+    return this.text.indexOfPosition(
+      this.getEndPosition(annotation),
+      searchDir
+    );
+  }
+
+  private onTextInsert(e: ListEvent<string>): void {
+    for (const position of e.positions) {
+      this.getAnnotationsInternal(position, true)
+        ?.filter((a) => !a.visible)
+        .forEach((a) => {
+          this.showAnnotation(a as AdditionAnnotation, e.meta);
+        });
+    }
+
+    this.emit("Insert", {
+      index: e.index,
+      values: e.values.join(""),
+      positions: e.positions,
+      annotations: this.getAnnotationsInternal(e.positions[0]),
+      meta: e.meta,
+    });
+  }
+
+  private onTextDelete(e: ListEvent<string>): void {
+    for (const position of e.positions) {
+      this.getAnnotationsInternal(position, true)
+        ?.filter((a) => a.visible)
+        .forEach((a) => {
+          const startIndex =
+            this.getStartIndex(a as AdditionAnnotation, "left") +
+            (a.startClosed ? 0 : 1); // If the start is closed, the annotation starts at the current index, otherwise it starts at the next index
+          const endIndex =
+            this.getEndIndex(a as AdditionAnnotation, "right") -
+            (a.endClosed ? 0 : 1); // If the end is closed, the annotation ends at the current index, otherwise it ends at the previous index
+
+          console.log(startIndex, endIndex);
+
+          if (startIndex === -1 || endIndex === -1 || startIndex > endIndex) {
+            // If the annotation has no textcontent left, hide it
+            this.hideAnnotation(a as AdditionAnnotation, e.meta);
+          }
+        });
+    }
+
+    this.emit("Delete", {
+      index: e.index,
+      values: e.values.join(""),
+      positions: e.positions,
+      meta: e.meta,
+    });
   }
 
   /**
@@ -420,7 +479,7 @@ export class TrackChanges
 
       data.set(annotation.type, [
         ...(data.get(annotation.type) || []),
-        { ...annotation, endingHere: isEnd },
+        { ...annotation, endingHere: isEnd, visible: true },
       ]);
     }
 
@@ -496,16 +555,115 @@ export class TrackChanges
   }
 
   /**
+   * Hides an annotation from the view, but keeps it in the annotationList. This is useful when e.g. all text content of an annotation is deleted,
+   * but the annotation should still be kept for later use (e.g. to restore it when the text is reinserted).
+   * @param a The annotation to hide.
+   * @param meta The update metadata that is responsible for this change.
+   */
+  private hideAnnotation(a: AdditionAnnotation, meta: UpdateMeta) {
+    const startIndex =
+      a.startPosition === null
+        ? null
+        : this.annotationList.indexOfPosition(a.startPosition, "left");
+    const endIndex =
+      a.endPosition === null
+        ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
+        : this.annotationList.indexOfPosition(a.endPosition);
+
+    // Go trough all datapoints in the given range and hide the annotation.
+    for (
+      let i = startIndex || 0;
+      i <= (endIndex !== null ? endIndex : this.annotationList.length - 1);
+      i++
+    ) {
+      const position = this.annotationList.getPosition(i);
+      const data = this.annotationList.getByPosition(position)!;
+
+      const annotationsOfType = data.get(a.type) || [];
+      const updatedAnnotations = annotationsOfType.map((s) => {
+        if (s.id === a.id) {
+          return { ...s, visible: false };
+        }
+        return s;
+      });
+
+      data.set(a.type, updatedAnnotations);
+    }
+
+    this.emit("AnnotationRemoved", {
+      startIndex: a.startPosition
+        ? this.text.indexOfPosition(a.startPosition, "left")
+        : 0,
+      endIndex: a.endPosition
+        ? this.text.indexOfPosition(a.endPosition, "right")
+        : this.text.length,
+      meta,
+      reason: AnnotationRemovalReason.REMOVED,
+      annotation: a as AdditionAnnotation,
+      author: this.userId, // Placeholder, because textevents don't have an author yet
+    });
+  }
+
+  /**
+   * Shows an annotation in the view, making it visible again.
+   * @param a The annotation to show.
+   * @param meta The update metadata that is responsible for this change.
+   */
+  private showAnnotation(a: AdditionAnnotation, meta: UpdateMeta) {
+    const startIndex =
+      a.startPosition === null
+        ? null
+        : this.annotationList.indexOfPosition(a.startPosition, "left");
+    const endIndex =
+      a.endPosition === null
+        ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
+        : this.annotationList.indexOfPosition(a.endPosition);
+
+    // Go trough all datapoints in the given range and show the annotation.
+    for (
+      let i = startIndex || 0;
+      i <= (endIndex !== null ? endIndex : this.annotationList.length - 1);
+      i++
+    ) {
+      const position = this.annotationList.getPosition(i);
+      const data = this.annotationList.getByPosition(position)!;
+
+      const annotationsOfType = data.get(a.type) || [];
+      const updatedAnnotations = annotationsOfType.map((s) => {
+        if (s.id === a.id) {
+          return { ...s, visible: true };
+        }
+        return s;
+      });
+
+      data.set(a.type, updatedAnnotations);
+    }
+
+    this.emit("AnnotationAdded", {
+      startIndex: a.startPosition
+        ? this.text.indexOfPosition(a.startPosition, "left")
+        : 0,
+      endIndex: a.endPosition
+        ? this.text.indexOfPosition(a.endPosition, "right")
+        : this.text.length,
+      annotation: a as AdditionAnnotation,
+      meta,
+    });
+  }
+
+  /**
    * Returns the currently applied annotations at a given text position.
    * Open endings are not formatted and thus not included in the returned data.
    *
    * If position is not currently present, returns the formatting that a character
    * at the position would have if present...
-   * @param position
+   * @param position The position to get the annotations for.
+   * @param getHidden If true, also returns annotations that are not visible
    */
   private getAnnotationsInternal(
-    position: Position
-  ): AdditionAnnotation[] | null {
+    position: Position,
+    getHidden: boolean = false
+  ): AnnotationData[] | null {
     const index = this.text.indexOfPosition(position, "left");
 
     const dataIndex = this.annotationList.indexOfPosition(
@@ -528,7 +686,9 @@ export class TrackChanges
       .flat()
       .filter(
         (s) =>
-          !s.endingHere || (dataPos === position && s.endingHere && s.endClosed)
+          (s.visible || getHidden) &&
+          (!s.endingHere ||
+            (dataPos === position && s.endingHere && s.endClosed))
       ); // only allow annotations that are not ending here or are ending here and have an endClosed flag
     return annotations.length > 0 ? annotations : null;
   }
@@ -558,7 +718,7 @@ export class TrackChanges
           }
           acc.get(s.type)!.push({ ...s, endingHere: false }); // Copy the annotation without endingHere
           return acc;
-        }, new Map<AnnotationType, (AdditionAnnotation & { endingHere: boolean })[]>());
+        }, new Map<AnnotationType, (AdditionAnnotation & { endingHere: boolean; visible: boolean })[]>());
 
       this.annotationList.set(position, new Map(prev));
     }

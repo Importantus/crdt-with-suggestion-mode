@@ -39,7 +39,6 @@ function addComment() {
   // Get the current selection start index
   const startPosition = collabStore.presence.get(collabStore.replicaId)?.selection?.anchor
   const endPosition = collabStore.presence.get(collabStore.replicaId)?.selection?.head
-  console.log('Start position:', startPosition, 'End position:', endPosition)
   if (startPosition === undefined || endPosition === undefined) return
 
   const startIndex = Cursors.toIndex(startPosition, content)
@@ -57,7 +56,7 @@ function onContainerScroll(event: Event) {
   const target = event.target as HTMLElement
   isContainerScrolled.value = target.scrollTop > 10
 
-  updateAnnotationPositions()
+  // updateAnnotationPositions()
 }
 
 async function updateAnnotationPositions(awaitForNextTick = true) {
@@ -102,11 +101,15 @@ onMounted(() => {
     collabStore.leaveDocument()
   })
 
-  updateAnnotationPositions()
+  setTimeout(() => {
+    updateAnnotationPositions()
+  }, 100)
 })
 
 watch(sortedAnnotations, () => {
-  updateAnnotationPositions()
+  setTimeout(() => {
+    updateAnnotationPositions()
+  }, 100)
 })
 </script>
 

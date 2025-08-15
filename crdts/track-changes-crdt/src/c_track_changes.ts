@@ -307,7 +307,6 @@ export class TrackChanges
       );
 
       const relevantUpdates = existing.filter((a) => a.id !== annotation.id);
-      console.log("Relevant updates:", relevantUpdates);
 
       const existingAnnotation = this.applyUpdateOperations(
         additionAnnotation,
@@ -451,15 +450,10 @@ export class TrackChanges
     reason: AnnotationRemovalReason,
     author: string
   ) {
-    console.log(
-      `Removing annotation ${annotation.id} from ${annotation.startPosition} to ${annotation.endPosition}`,
-      annotation
-    );
     const startIndex =
       annotation.startPosition === null
         ? null
         : this.annotationList.indexOfPosition(annotation.startPosition, "left");
-    console.log("Start index:", startIndex);
     const endIndex =
       annotation.endPosition === null
         ? null // If the annotation is open ended an goes to the end of the document, no ending should be set
@@ -527,9 +521,6 @@ export class TrackChanges
     }
 
     const dataPos = this.annotationList.getPosition(dataIndex);
-    console.log(
-      `Getting annotations at position ${dataPos} for position ${position}`
-    );
     const data = this.annotationList.getByPosition(dataPos);
     if (!data) return null;
     // Flatten all annotation arrays and
@@ -615,8 +606,6 @@ export class TrackChanges
     const startPos = this.text.getPosition(index);
     const existing = this.getAnnotationsInternal(startPos);
 
-    console.log(existing, "Existing annotations at insert position:", startPos);
-
     if (existing) {
       // Update the existing annotation to shrink it
       for (const annotation of existing.filter(
@@ -640,8 +629,6 @@ export class TrackChanges
 
         const isOnAbsoluteEnd =
           !annotation.endPosition && index === this.text.length - 1;
-
-        console.log(index, this.text.length);
 
         this.annotationLog.add({
           dependentOn: annotation.id,
@@ -866,10 +853,6 @@ export class TrackChanges
    * (i.e. "they get merged")
    */
   private createDeleteAnnotation(index: number, count: number) {
-    console.log(
-      `Creating delete annotation at index ${index} with count ${count}`
-    );
-
     // Find the most relevant adjacent delete annotation before the deletion.
     let relevantAnnotation = this.findAdjacentDeleteAnnotation(
       index > 0 ? this.text.getPosition(index - 1) : null,
@@ -892,10 +875,6 @@ export class TrackChanges
     // When a adjacent annotation is present, we need to create an updated annotation
     // that lets the new annotation grow to the left or right.
     if (relevantAnnotation) {
-      console.log(
-        `Found relevant adjacent delete annotation: ${relevantAnnotation.id}`
-      );
-
       this.annotationLog.add({
         type: AnnotationType.SUGGESTION,
         action: AnnotationAction.UPDATE,
@@ -947,11 +926,6 @@ export class TrackChanges
         s.userId === this.userId
     );
 
-    console.log(
-      `Found ${candidates.length} candidates for ${direction} delete annotation at position ${this.text.indexOfPosition(position)}`,
-      candidates
-    );
-
     if (candidates.length === 0) {
       return undefined;
     }
@@ -968,10 +942,6 @@ export class TrackChanges
           ? this.text.indexOfPosition(current.startPosition)
           : 0;
 
-        console.log(
-          `Comparing ${bestIndex} with ${currentIndex} for previous direction`
-        );
-
         return currentIndex < bestIndex ? current : best;
       } else {
         // direction === 'next'
@@ -982,10 +952,6 @@ export class TrackChanges
         const currentEndIndex = current.endPosition
           ? this.text.indexOfPosition(current.endPosition)
           : -1;
-
-        console.log(
-          `Comparing ${bestEndIndex} with ${currentEndIndex} for next direction`
-        );
 
         return currentEndIndex > bestEndIndex ? current : best;
       }

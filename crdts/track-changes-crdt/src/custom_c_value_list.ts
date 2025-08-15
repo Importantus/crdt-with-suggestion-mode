@@ -147,7 +147,6 @@ export class CustomCValueList<T> extends AbstractList_CObject<T, [T]> {
     switch (decoded.op) {
       case "insert": {
         const insert = nonNull(decoded.insert) as ValueListInsertMessage;
-        console.log("CValueList insert", insert);
         const values =
           insert.data?.kind === "value"
             ? [this.valueSerializer.deserialize(insert.data.value)]
@@ -201,8 +200,6 @@ export class CustomCValueList<T> extends AbstractList_CObject<T, [T]> {
         const { from, to } = decoded.deleteRange;
         const fromIndex = this.list.indexOfPosition(from, "right");
         const toIndex = this.list.indexOfPosition(to, "left");
-
-        console.log("Delete range from", fromIndex, "to", toIndex);
 
         if (fromIndex !== -1 && toIndex !== -1 && fromIndex <= toIndex) {
           const deletedValues: T[] = [];

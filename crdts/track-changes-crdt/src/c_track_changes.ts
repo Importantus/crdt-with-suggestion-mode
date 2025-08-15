@@ -3,7 +3,6 @@ import {
   CollabEvent,
   CollabEventsRecord,
   CTotalOrder,
-  CValueList,
   ICursorList,
   InitToken,
   LocalList,
@@ -22,6 +21,7 @@ import {
   RemovalAnnotation,
   UpdateAnnotation,
 } from "./c_annotation";
+import { CustomCValueList } from "./custom_c_value_list";
 
 export interface TrackChangesTextInsertEvent extends TextEvent {
   annotations: null | Annotation[];
@@ -132,7 +132,7 @@ export class TrackChanges
    * https://collabs.readthedocs.io/en/latest/api/crdts/classes/CTotalOrder.html
    * https://mattweidner.com/2022/10/21/basic-list-crdt.html
    */
-  private readonly text: CValueList<string>;
+  private readonly text: CustomCValueList<string>;
   /**
    * The crdt that is responsible for syncing and storing the annotation markers
    */
@@ -161,7 +161,7 @@ export class TrackChanges
 
     this.text = super.registerCollab(
       "text",
-      (init) => new CValueList<string>(init)
+      (init) => new CustomCValueList<string>(init)
     );
 
     this.annotationLog = super.registerCollab(
@@ -1024,18 +1024,15 @@ export class TrackChanges
       existing &&
       existing.description === AnnotationDescription.DELETE_SUGGESTION
     ) {
-      const startIndex = existing.startPosition
-        ? this.text.indexOfPosition(existing.startPosition)
-        : 0;
+      const startPosition = existing.startPosition
+        ? existing.startPosition
+        : this.text.getPosition(0);
 
-      this.text.delete(
-        startIndex,
-        (existing.endPosition
-          ? this.text.indexOfPosition(existing.endPosition, "left")
-          : this.text.length) -
-          startIndex +
-          1
-      );
+      const endPosition = existing.endPosition
+        ? existing.endPosition
+        : this.text.getPosition(this.text.length - 1);
+
+      this.text.deleteRange(startPosition, endPosition);
     }
   }
 
@@ -1075,14 +1072,16 @@ export class TrackChanges
         ? this.text.indexOfPosition(existing.startPosition)
         : 0;
 
-      this.text.delete(
-        startIndex + 1, // +1 because we have an open start
+      const startPosition = this.text.getPosition(startIndex + 1); // +1 because we have an open start
+
+      const endIndex =
         (existing.endPosition
           ? this.text.indexOfPosition(existing.endPosition, "right")
-          : this.text.length) -
-          startIndex -
-          1 // -1 because we have an open start
-      );
+          : this.text.length) - 1; // -1 because we have an open end
+
+      const endPosition = this.text.getPosition(endIndex);
+
+      this.text.deleteRange(startPosition, endPosition);
     }
   }
 

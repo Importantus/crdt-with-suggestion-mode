@@ -1,41 +1,56 @@
-# Track Changes CRDT for Collabs
+# Track Changes CRDT
 
-This library provides a collaborative data structure (CRDT) for tracking changes and suggestions in text documents, built on top of the [Collabs](https://collabs.readthedocs.io/) framework. It enables real-time collaborative editing with support for suggestions, comments, and change tracking, suitable for applications like document editors.
+A collaborative data structure (CRDT) that implements a review mode in text documents. Built on top of the [Collabs](https://collabs.readthedocs.io/) framework, this library.
 
-## Features
+## Getting Started
 
-- **Track Changes**: Model insertions, deletions, and formatting changes as suggestions.
-- **Suggestions**: Propose, accept, or decline changes to the document collaboratively.
-- **Comments**: Add and remove comments on text ranges.
-- **CRDT-based**: Ensures consistency and conflict-free merging across distributed replicas.
-- **TypeScript API**: Strongly typed interfaces for integration and extension.
+### Installation
 
-## Usage
-
-Create a new instance:
-
-// TODO: Add usage example here
-```typescript
-
+```bash
+npm install
 ```
 
-Apply edits and suggestions:
+### Basic Usage
 
 ```typescript
-trackChanges.insert(0, "Hello world", true); // Insert with suggestion
-trackChanges.delete(6, 5, true); // Suggest deletion
+import { CRuntime } from "@collabs/collabs";
+import { TrackChanges } from "track-changes-crdt";
+
+// Initialize a Collabs document
+const doc = new CRuntime();
+const trackChanges = doc.registerCollab(
+  "trackChanges",
+  (init) => new TrackChanges(init, { userId: "user-123" })
+);
+
+// Insert text as a suggestion
+trackChanges.insert(0, "Hello world", true);
+
+// Suggest deletion
+trackChanges.delete(6, 5, true);
+
+// Add a comment
 trackChanges.addComment(0, 5, "Check this intro");
+
+// Accept or decline suggestions
+trackChanges.acceptSuggestion(suggestionId);
+trackChanges.declineSuggestion(suggestionId);
+
+// Get the current plain text
+console.log(trackChanges.toString());
 ```
 
-Accept or decline suggestions:
+For collaborative and persistent usage, connect Collabs to network and storage providers such as `WebSocketNetwork`, `TabSyncNetwork`, and `IndexedDBDocStore`. See the [Collabs documentation](https://collabs.readthedocs.io/en/latest/getting_started.html) for details.
 
-```typescript
-trackChanges.acceptSuggestion(index, suggestionId);
-trackChanges.declineSuggestion(index, suggestionId);
-```
+## API Reference
+
+Build the [API documentation](./docs) for detailed information on available methods and types.
 
 ## Development
 
 - Build: `npm run build`
-- Test: `npm test`
 - Documentation: `npm run build:docs`
+
+## Contributing
+
+Contributions, bug reports, and suggestions are welcome! Please open an issue or submit a pull request.

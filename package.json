@@ -1,19 +1,19 @@
 {
     "name": "crdt-with-suggestion-mode",
+    "comment": "workspaces must be in build order, and workspace names must not include spaces or otherwise fail to be proper bash args",
     "private": true,
     "workspaces": [
-        "client",
-        "server",
         "crdts/track-changes-crdt",
         "crdts/track-changes-application",
-        "examples/text-editor",
-        "examples/track-changes-codemirror"
+        "examples/track-changes-codemirror",
+        "examples/text-editor"
     ],
     "dependencies": {
         "typedoc": "^0.28.7",
         "typedoc-github-theme": "^0.3.0"
     },
     "scripts": {
-        "build:docs": "typedoc"
+        "build:docs": "typedoc",
+        "build": "node foreach-workspace.js all \"npm run build -w\""
     }
 }

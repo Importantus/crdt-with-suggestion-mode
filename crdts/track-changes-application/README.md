@@ -1,6 +1,6 @@
 # Track Changes Collaborative Application
 
-A TypeScript library for building collaborative editing applications with suggestion-mode support, based on the Collabs CRDT framework.
+A TypeScript library for building collaborative editing applications with support for a review mode, based on the Collabs CRDT framework.
 
 ## Overview
 
@@ -29,25 +29,35 @@ Documents are managed in real time, with support for multiple users, live presen
   - `fileName`: Collaborative text field for the document name.
   - `content`: Collaborative content with track changes.
 
-## Installation
-
-Install via npm:
-
-```bash
-npm install track-changes-application
-```
-
-Peer dependencies:
-- `@collabs/collabs`
-- `track-changes-crdt`
-- `uuid`
-
 ## Usage Example
 
-// TODO: Add usage example here
 ```typescript
+import { CRuntime } from "@collabs/collabs";
+import { TrackChangesApplication } from "track-changes-application";
 
-```
+// Initialize a Collabs runtime
+const runtime = new CRuntime();
+
+// Register the collaborative application
+const app = runtime.registerCollab(
+  "app",
+  (init) => new TrackChangesApplication(init, { userId: "user-123" })
+);
+
+// Create a new collaborative document
+const docId = app.createDocument("example.md");
+const document = app.documents.get(docId);
+
+// Edit the document content with track changes
+document?.content.insert(0, "Hello collaborative world!", true); // Insert as suggestion
+document?.content.addComment(0, 5, "Please review this section");
+
+// Accept or decline a suggestion
+document?.content.acceptSuggestion(suggestionId);
+document?.content.declineSuggestion(suggestionId);
+
+// Access presence information
+console.log(app.presence.get("user-123"))
 
 ## Development
 

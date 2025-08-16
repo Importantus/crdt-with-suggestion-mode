@@ -75,6 +75,8 @@ interface AnnotationBase {
   readonly lamport: number;
   /** ID of the sender, used for lamport tie-breaking */
   readonly senderID: string;
+  /** The epoch timestamp. Only used for ui */
+  readonly timestamp: number;
 }
 
 /**
@@ -186,12 +188,15 @@ export class CAnnotationLog extends PrimitiveCRDT<AnnotationEventsRecord> {
    * Adds a new addition annotation (comment or suggestion).
    * Broadcasts to other replicas.
    */
-  add(annotation: Omit<Annotation, "id" | "lamport" | "senderID">): void {
+  add(
+    annotation: Omit<Annotation, "id" | "lamport" | "senderID" | "timestamp">
+  ): void {
     console.log("Adding annotation", annotation);
     super.sendCRDT(
       this.partialAnnotationSerializer.serialize({
         ...annotation,
         id: uuidv4(),
+        timestamp: Date.now(),
       })
     );
   }

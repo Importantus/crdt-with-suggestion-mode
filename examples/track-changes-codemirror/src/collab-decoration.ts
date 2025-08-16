@@ -5,7 +5,6 @@ import {
   ViewPlugin,
   ViewUpdate,
 } from "@codemirror/view";
-import { type Position } from "@collabs/collabs";
 import { AnnotationDescription, type AnnotationId } from "track-changes-crdt";
 import type { AdditionAnnotation } from "track-changes-crdt/build/esm/c_annotation";
 import { trackChangesFacet } from "./collab-config";
@@ -56,14 +55,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
      * Map of active annotations keyed by annotation ID.
      * Each entry holds the annotation data and its start/end positions.
      */
-    activeAnnotations = new Map<
-      AnnotationId,
-      {
-        annotation: AdditionAnnotation;
-        startPos: Position | null;
-        endPos: Position | null;
-      }
-    >();
+    activeAnnotations = new Map<AnnotationId, AdditionAnnotation>();
 
     /**
      * Initializes the plugin: loads existing annotations and subscribes to updates.
@@ -75,11 +67,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       // Subscribe to addition of new annotations
       config.doc.content.on("AnnotationAdded", (event) => {
         const { annotation } = event;
-        this.activeAnnotations.set(annotation.id, {
-          annotation,
-          startPos: annotation.startPosition,
-          endPos: annotation.endPosition,
-        });
+        this.activeAnnotations.set(annotation.id, annotation);
         this.updateDecorations(view);
       });
 
@@ -93,13 +81,9 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       this.activeAnnotations = config.doc.content
         .getActiveAnnotations()
         .reduce((map, item) => {
-          map.set(item.id, {
-            annotation: item,
-            startPos: item.startPosition,
-            endPos: item.endPosition,
-          });
+          map.set(item.id, item);
           return map;
-        }, new Map<AnnotationId, { annotation: AdditionAnnotation; startPos: Position | null; endPos: Position | null }>());
+        }, new Map<AnnotationId, AdditionAnnotation>());
 
       // Initial render of decorations
       this.updateDecorations(view);
@@ -126,23 +110,23 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       const decorations = [];
 
       for (const item of this.activeAnnotations.values()) {
-        let startIndex = item.startPos
-          ? content.indexOfPosition(item.startPos, "left")
-          : 0; // If no position found (e.g. -1), it later defaults to 0 because +1 is added for open ranges
+        let startIndex = item.startPosition
+          ? content.indexOfPosition(item.startPosition, "left")
+          : -1; // -1 because we have an open start and the annotation is practically fixed to the character before the insertion (char 0)
 
-        let endIndex = item.endPos
-          ? content.indexOfPosition(item.endPos, "right")
+        let endIndex = item.endPosition
+          ? content.indexOfPosition(item.endPosition, "right")
           : content.length;
         if (endIndex === -1) {
           endIndex = content.length; // Fallback to end of document if position not found
         }
 
-        let startCheckIndex = item.startPos
-          ? content.indexOfPosition(item.startPos, "right")
+        let startCheckIndex = item.startPosition
+          ? content.indexOfPosition(item.startPosition, "right")
           : 0;
 
-        let endCheckIndex = item.endPos
-          ? content.indexOfPosition(item.endPos, "left")
+        let endCheckIndex = item.endPosition
+          ? content.indexOfPosition(item.endPosition, "left")
           : content.length;
 
         if (startCheckIndex > endCheckIndex) {
@@ -151,7 +135,7 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
 
         // Extend range if the annotation end is closed
         if (
-          item.annotation.endClosed &&
+          item.endClosed &&
           endIndex < content.length &&
           endCheckIndex === endIndex // Only extend if the end is closed and the real end position is not already deleted
         ) {
@@ -160,9 +144,8 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
 
         // Reduce range if the start is open
         if (
-          (item.annotation.startClosed === false && item.startPos) ||
-          (item.annotation.startClosed !== false &&
-            startCheckIndex !== startIndex) // If the start is closed and the real start position is already deleted, we also need to reduce the range
+          item.startClosed === false ||
+          startCheckIndex !== startIndex // If the start is closed and the real start position is already deleted, we also need to reduce the range
         ) {
           startIndex += 1;
         }
@@ -170,8 +153,8 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
         if (startIndex < endIndex) {
           decorations.push(
             annotationToDecoration(
-              item.annotation,
-              config.getUserColor(item.annotation.userId)
+              item,
+              config.getUserColor(item.userId)
             ).range(startIndex, endIndex)
           );
         }

@@ -9,10 +9,7 @@ import { type Position } from "@collabs/collabs";
 import { AnnotationDescription, type AnnotationId } from "track-changes-crdt";
 import type { AdditionAnnotation } from "track-changes-crdt/build/esm/c_annotation";
 import { trackChangesFacet } from "./collab-config";
-
-const annotationInsertClass = "cm-annotation-insert";
-const annotationDeleteClass = "cm-annotation-delete";
-const commentClass = "cm-comment-range";
+import { addTransparencyToColor } from "./utils/color";
 
 /**
  * Converts a Annotation object into a CodeMirror Decoration.
@@ -21,22 +18,28 @@ const commentClass = "cm-comment-range";
  * @param annotation - The annotation metadata including id and description.
  * @returns A Decoration marking the suggested range in the editor.
  */
-function annotationToDecoration(annotation: AdditionAnnotation): Decoration {
-  let className = "";
+function annotationToDecoration(
+  annotation: AdditionAnnotation,
+  userColor: string
+): Decoration {
+  let style = "";
+  const userColorFull = userColor;
+  const userColorTransparent = addTransparencyToColor(userColor, 0.2);
+
   switch (annotation.description) {
     case AnnotationDescription.INSERT_SUGGESTION:
-      className = annotationInsertClass;
+      style = `background-color: ${userColorTransparent}; text-decoration: underline solid ${userColorFull} 2px;`;
       break;
     case AnnotationDescription.DELETE_SUGGESTION:
-      className = annotationDeleteClass;
+      style = `background-color: ${userColorTransparent}; text-decoration: line-through solid ${userColorFull} 2px;`;
       break;
     case AnnotationDescription.ADD_COMMENT:
-      className = commentClass;
+      style = `background-color: rgba(255, 255, 0, 0.3); border-bottom: 2px dotted #f8c300;`;
       break;
   }
+
   return Decoration.mark({
-    class: className,
-    attributes: { "data-annotation-id": annotation.id },
+    attributes: { "data-annotation-id": annotation.id, style },
   });
 }
 
@@ -166,7 +169,10 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
 
         if (startIndex < endIndex) {
           decorations.push(
-            annotationToDecoration(item.annotation).range(startIndex, endIndex)
+            annotationToDecoration(
+              item.annotation,
+              config.getUserColor(item.annotation.userId)
+            ).range(startIndex, endIndex)
           );
         }
       }
@@ -184,22 +190,3 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
     decorations: (v) => v.decorations,
   }
 );
-
-/**
- * Defines CSS styles for annotation highlights and comments in the editor.
- * Uses a light background and underline/strikethrough to indicate changes.
- */
-export const trackChangesTheme = EditorView.baseTheme({
-  [`& .${annotationInsertClass}`]: {
-    backgroundColor: "rgba(0, 255, 0, 0.2)",
-    textDecoration: "underline solid #0a0 2px",
-  },
-  [`& .${annotationDeleteClass}`]: {
-    backgroundColor: "rgba(255, 0, 0, 0.2)",
-    textDecoration: "line-through solid #a00 2px",
-  },
-  [`& .${commentClass}`]: {
-    backgroundColor: "rgba(255, 255, 0, 0.3)",
-    borderBottom: "2px dotted #f8c300",
-  },
-});

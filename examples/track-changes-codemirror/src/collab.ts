@@ -1,21 +1,28 @@
-import { Prec, type Extension } from '@codemirror/state'
-import { keymap } from '@codemirror/view'
-import { TrackChangesConfig, trackChangesFacet, type TrackChangesOptions } from './collab-config'
-import { trackChangesDecorations, trackChangesTheme } from './collab-decoration'
-import { remoteCursorsTheme, trackChangesRemoteCursors } from './collab-remote-cursors'
-import { collabInputHandler, collabSync } from './collab-sync'
+import { Prec, type Extension } from "@codemirror/state";
+import { keymap } from "@codemirror/view";
+import {
+  TrackChangesConfig,
+  trackChangesFacet,
+  type TrackChangesOptions,
+} from "./collab-config";
+import { trackChangesDecorations } from "./collab-decoration";
+import {
+  remoteCursorsTheme,
+  trackChangesRemoteCursors,
+} from "./collab-remote-cursors";
+import { collabInputHandler, collabSync } from "./collab-sync";
 
-import { StateEffect, StateField } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { StateEffect, StateField } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 
-const setAnnotationMode = StateEffect.define<boolean>()
+const setAnnotationMode = StateEffect.define<boolean>();
 
 interface DynamicFlags {
   /**
    * Whether the user is currently in suggesting mode.
    * In this mode, edits are recorded as annotations rather than direct changes.
    */
-  annotationMode: boolean
+  annotationMode: boolean;
 }
 
 /**
@@ -24,25 +31,26 @@ interface DynamicFlags {
  */
 export const dynamicFlagsField = StateField.define<DynamicFlags>({
   create() {
-    return { viewing: true, annotationMode: false }
+    return { viewing: true, annotationMode: false };
   },
   update(flags, tr) {
     for (const fx of tr.effects) {
-      if (fx.is(setAnnotationMode)) flags = { ...flags, annotationMode: fx.value }
+      if (fx.is(setAnnotationMode))
+        flags = { ...flags, annotationMode: fx.value };
     }
-    return flags
+    return flags;
   },
-})
+});
 
 /**
  * Integrates collaborative track changes functionality into a CodeMirror editor.
  * @param options - Configuration options for track changes and collaboration.
  */
 export class TrackChangesAPI {
-  private config: TrackChangesConfig
+  private config: TrackChangesConfig;
 
   constructor(options: TrackChangesOptions) {
-    this.config = new TrackChangesConfig(options)
+    this.config = new TrackChangesConfig(options);
   }
 
   /**
@@ -65,22 +73,23 @@ export class TrackChangesAPI {
 
       // Render decorations for annotations and comments
       trackChangesDecorations,
-      trackChangesTheme,
 
       // Optionally enable remote cursors and selections
-      ...(this.config.presence ? [trackChangesRemoteCursors, remoteCursorsTheme] : []),
+      ...(this.config.presence
+        ? [trackChangesRemoteCursors, remoteCursorsTheme]
+        : []),
 
       // Disable default undo/redo behavior (Mod-z, Mod-y)
       Prec.high(
         keymap.of([
-          { key: 'Mod-z', run: () => true },
-          { key: 'Mod-y', run: () => true },
-          { key: 'Mod-Shift-z', run: () => true },
-        ]),
+          { key: "Mod-z", run: () => true },
+          { key: "Mod-y", run: () => true },
+          { key: "Mod-Shift-z", run: () => true },
+        ])
       ),
-    ]
+    ];
 
-    return extensions
+    return extensions;
   }
 
   /**
@@ -89,11 +98,11 @@ export class TrackChangesAPI {
    * @param on - `true` to enable suggesting mode, `false` to disable.
    */
   setAnnotationMode(view: EditorView, on: boolean): void {
-    view.dispatch({ effects: setAnnotationMode.of(on) })
+    view.dispatch({ effects: setAnnotationMode.of(on) });
   }
 
   /** Get current flag values */
   getFlags(view: EditorView): DynamicFlags {
-    return view.state.field(dynamicFlagsField)
+    return view.state.field(dynamicFlagsField);
   }
 }

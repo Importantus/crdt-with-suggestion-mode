@@ -15,6 +15,7 @@ import {
 import { Cursors } from "@collabs/collabs";
 import { type PresenceState } from "track-changes-application";
 import { trackChangesFacet } from "./collab-config";
+import { addTransparencyToColor } from "./utils/color";
 
 const setRemoteStates = StateEffect.define<readonly PresenceState[]>();
 
@@ -139,12 +140,14 @@ export const trackChangesRemoteCursors = ViewPlugin.fromClass(
 
         const from = Math.min(Math.min(anchorPos, headPos), docLength);
         const to = Math.min(Math.max(anchorPos, headPos), docLength);
-        const color = getUserColor(state.userId, 0.3);
+        const color = config.getUserColor(state.userId);
 
         if (from !== to) {
           decorations.push(
             Decoration.mark({
-              attributes: { style: `background-color: ${color}` },
+              attributes: {
+                style: `background-color: ${addTransparencyToColor(color, 0.3)}`,
+              },
               class: "cm-remote-selection",
             }).range(from, to)
           );
@@ -165,22 +168,6 @@ export const trackChangesRemoteCursors = ViewPlugin.fromClass(
     decorations: (v) => v.decorations,
   }
 );
-
-export function getUserColor(userId: string, transparency = 1.0) {
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const color = (hash & 0x00ffffff).toString(16).toUpperCase();
-  return (
-    "#" +
-    "00000".substring(0, 6 - color.length) +
-    color +
-    Math.floor(transparency * 255)
-      .toString(16)
-      .padStart(2, "0")
-  );
-}
 
 export const remoteCursorsTheme = EditorView.baseTheme({
   ".cm-remote-selection": {},

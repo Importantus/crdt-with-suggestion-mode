@@ -531,10 +531,13 @@ export class TrackChanges
       .flat()
       .filter(
         (s) =>
-          dataPos !== position ||
+          (dataPos !== position && !s.endingHere) ||
           (!s.endingHere && !s.startingHere) ||
-          (s.startingHere && s.startClosed) ||
-          (s.endingHere && s.endClosed)
+          (dataPos === position &&
+            s.startingHere &&
+            s.startClosed &&
+            !s.endingHere) ||
+          (s.endingHere && s.endClosed && dataPos === position)
       ); // only allow annotations that are not ending here or are ending here and have an endClosed flag
     return annotations.length > 0 ? annotations : null;
   }
@@ -815,6 +818,8 @@ export class TrackChanges
       rightGrowing = false; // If we found a next annotation, this annotation now grows to the left.
     }
 
+    console.log("Relevant Annotation", relevantAnnotation);
+
     // When a adjacent annotation is present, we need to create an updated annotation
     // that lets the new annotation grow to the left or right.
     if (relevantAnnotation) {
@@ -860,6 +865,8 @@ export class TrackChanges
     if (!position) {
       return undefined;
     }
+
+    console.log("Searching for delete annotation at", position);
 
     const candidates = (this.getAnnotationsInternal(position) || []).filter(
       (s) =>

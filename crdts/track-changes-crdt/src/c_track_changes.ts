@@ -119,7 +119,7 @@ export interface TrackChangesEventsRecord extends CollabEventsRecord {
  */
 type AnnotationDataPoint = Map<
   AnnotationType,
-  (AdditionAnnotation & { endingHere: boolean })[]
+  (AdditionAnnotation & { endingHere: boolean; startingHere: boolean })[]
 >;
 
 export class TrackChanges
@@ -417,11 +417,14 @@ export class TrackChanges
       const position = this.annotationList.getPosition(i);
       const data = this.annotationList.getByPosition(position)!;
       const isEnd = i === endIndex;
+      const isStart = i === startIndex;
 
       data.set(annotation.type, [
         ...(data.get(annotation.type) || []),
-        { ...annotation, endingHere: isEnd },
+        { ...annotation, endingHere: isEnd, startingHere: isStart },
       ]);
+
+      console.log(position, i, data.get(annotation.type));
     }
 
     this.emit("AnnotationAdded", {
@@ -528,7 +531,10 @@ export class TrackChanges
       .flat()
       .filter(
         (s) =>
-          !s.endingHere || (dataPos === position && s.endingHere && s.endClosed)
+          dataPos !== position ||
+          (!s.endingHere && !s.startingHere) ||
+          (s.startingHere && s.startClosed) ||
+          (s.endingHere && s.endClosed)
       ); // only allow annotations that are not ending here or are ending here and have an endClosed flag
     return annotations.length > 0 ? annotations : null;
   }
@@ -558,7 +564,7 @@ export class TrackChanges
           }
           acc.get(s.type)!.push({ ...s, endingHere: false }); // Copy the annotation without endingHere
           return acc;
-        }, new Map<AnnotationType, (AdditionAnnotation & { endingHere: boolean })[]>());
+        }, new Map<AnnotationType, (AdditionAnnotation & { endingHere: boolean; startingHere: boolean })[]>());
 
       this.annotationList.set(position, new Map(prev));
     }
@@ -854,9 +860,8 @@ export class TrackChanges
    */
   private createDeleteAnnotation(index: number, count: number) {
     // Find the most relevant adjacent delete annotation before the deletion.
-    let relevantAnnotation = this.findAdjacentDeleteAnnotation(
-      index > 0 ? this.text.getPosition(index - 1) : null,
-      "previous"
+    let relevantAnnotation = this.findDeleteAnnotation(
+      index > 0 ? this.text.getPosition(index - 1) : null
     );
     let rightGrowing = true; // If we found a previous annotation, this annotation now grows to the right.
 
@@ -864,10 +869,7 @@ export class TrackChanges
       // If no previous annotation is found, check if the next position has a relevant annotation.
       relevantAnnotation =
         index + count < this.text.length
-          ? this.findAdjacentDeleteAnnotation(
-              this.text.getPosition(index + count),
-              "next"
-            )
+          ? this.findDeleteAnnotation(this.text.getPosition(index + count))
           : undefined;
       rightGrowing = false; // If we found a next annotation, this annotation now grows to the left.
     }
@@ -901,20 +903,18 @@ export class TrackChanges
       startPosition: this.text.getPosition(index),
       endPosition: this.text.getPosition(index + count - 1), // The end position is inclusive, so we need to subtract 1 from the index
       endClosed: true,
+      startClosed: true,
       userId: this.userId,
     } as AdditionAnnotation);
   }
 
   /**
-   * Finds the most relevant adjacent delete annotation at a given position.
-   * The most relevant are the biggest delete annotations of the same user
+   * Finds a delete annotation at a given position.
    * @param position The position at which to search. If null, nothing will be found.
-   * @param direction 'previous' looks for the annotation with the earliest start, 'next' for the one with the latest end.
    * @returns The found annotation or undefined.
    */
-  private findAdjacentDeleteAnnotation(
-    position: Position | null,
-    direction: "previous" | "next"
+  private findDeleteAnnotation(
+    position: Position | null
   ): AdditionAnnotation | undefined {
     if (!position) {
       return undefined;
@@ -930,32 +930,7 @@ export class TrackChanges
       return undefined;
     }
 
-    // Instead of sorting the entire array, we find the best element directly.
-    // This is more efficient when you only need to find an extremum.
-    return candidates.reduce((best, current) => {
-      if (direction === "previous") {
-        // Find the annotation that starts the earliest.
-        const bestIndex = best.startPosition
-          ? this.text.indexOfPosition(best.startPosition)
-          : 0;
-        const currentIndex = current.startPosition
-          ? this.text.indexOfPosition(current.startPosition)
-          : 0;
-
-        return currentIndex < bestIndex ? current : best;
-      } else {
-        // direction === 'next'
-        // Find the annotation that ends the latest.
-        const bestEndIndex = best.endPosition
-          ? this.text.indexOfPosition(best.endPosition)
-          : -1;
-        const currentEndIndex = current.endPosition
-          ? this.text.indexOfPosition(current.endPosition)
-          : -1;
-
-        return currentEndIndex > bestEndIndex ? current : best;
-      }
-    });
+    return candidates[0];
   }
 
   /**
@@ -1035,7 +1010,7 @@ export class TrackChanges
       existing.description === AnnotationDescription.INSERT_SUGGESTION
     ) {
       const startIndex = existing.startPosition
-        ? this.text.indexOfPosition(existing.startPosition)
+        ? this.text.indexOfPosition(existing.startPosition, "left")
         : 0;
 
       const startPosition = this.text.getPosition(startIndex + 1); // +1 because we have an open start
@@ -1081,6 +1056,7 @@ export class TrackChanges
       action: AnnotationAction.ADDITION,
       description: AnnotationDescription.ADD_COMMENT,
       endClosed: true,
+      startClosed: true,
       userId: this.userId,
       startPosition: this.text.getPosition(startIndex),
       endPosition: this.text.getPosition(endIndex),

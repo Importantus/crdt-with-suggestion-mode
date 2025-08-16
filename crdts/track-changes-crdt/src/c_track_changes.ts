@@ -709,8 +709,8 @@ export class TrackChanges
           !annotations.has(annotation.id)
         ) {
           annotations.set(annotation.id, annotation);
+        }
       }
-    }
     }
 
     return Array.from(annotations.values());
@@ -952,7 +952,7 @@ export class TrackChanges
     ) {
       const startIndex = existing.startPosition
         ? this.text.indexOfPosition(existing.startPosition, "left")
-        : 0;
+        : -1; // -1 because we have an open start and the annotation is practically fixed to the character before the insertion (char 0)
 
       const startPosition = this.text.getPosition(startIndex + 1); // +1 because we have an open start
 

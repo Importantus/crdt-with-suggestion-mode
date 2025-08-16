@@ -4,7 +4,6 @@
 import { CRuntime } from '@collabs/collabs'
 import { TabSyncNetwork } from '@collabs/tab-sync'
 import { defineStore } from 'pinia'
-import { v4 as uuidv4 } from 'uuid'
 import { reactive, ref, shallowRef, watch } from 'vue'
 
 import {
@@ -13,6 +12,7 @@ import {
   type PresenceState,
 } from 'track-changes-application'
 import { useDocumentStore } from './document'
+import { useUserStore } from './user'
 
 // Ein einfacher Typ für die Darstellung der Dokumentenliste in der UI
 export interface DocumentMeta {
@@ -22,6 +22,8 @@ export interface DocumentMeta {
 
 export const useCollabStore = defineStore('collab', () => {
   // --- STATE ---
+
+  const userStore = useUserStore()
 
   const docId = 'default-session'
   const runtime = new CRuntime()
@@ -49,11 +51,6 @@ export const useCollabStore = defineStore('collab', () => {
    * direkte Änderungen (false) behandelt werden.
    */
   const isAnnotationMode = ref<boolean>(false)
-
-  /**
-   * Die ID des aktuellen Benutzers.
-   */
-  const currentUserId = ref<string>('')
 
   /**
    * Replica ID for the current user, used for presence tracking.
@@ -84,11 +81,11 @@ export const useCollabStore = defineStore('collab', () => {
    * Erstellt die Collabs-Laufzeitumgebung, das Netzwerk und die Hauptanwendung.
    * @param docId Eine eindeutige ID für das Projekt.
    */
-  function initialize() {
-    const user = uuidv4()
-    currentUserId.value = user
-
-    const mainApp = runtime.registerCollab('app', (init) => new TrackChangesApplication(init, user))
+  function initialize(userId: string) {
+    const mainApp = runtime.registerCollab(
+      'app',
+      (init) => new TrackChangesApplication(init, userId),
+    )
     app.value = mainApp
 
     connection.value = true
@@ -99,7 +96,7 @@ export const useCollabStore = defineStore('collab', () => {
     attachEventListeners()
 
     app.value.presence.setOurs({
-      userId: user,
+      userId: userId,
       viewing: true,
       selection: null,
       replicaId: replicaId.value,
@@ -213,7 +210,7 @@ export const useCollabStore = defineStore('collab', () => {
 
     app.value.presence.setOurs({
       ...newState,
-      userId: currentUserId.value,
+      userId: userStore.activeUser?.id || 'unknown-user',
       replicaId: replicaId.value,
     })
   }
@@ -270,7 +267,6 @@ export const useCollabStore = defineStore('collab', () => {
     leaveDocument,
     app,
     isReady,
-    currentUserId,
     documents,
     presence,
     activeDocumentId,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useCollabStore } from '@/stores/collab';
 import { useDocumentStore } from '@/stores/document';
+import { getUserColor, useUserStore } from '@/stores/user';
 import {
   autocompletion,
   closeBrackets,
@@ -36,6 +37,7 @@ import { onMounted, ref, watch } from 'vue';
 
 const editorRef = ref<HTMLDivElement | null>(null);
 const collabStore = useCollabStore();
+const userStore = useUserStore();
 const documentStore = useDocumentStore();
 let view: EditorView | null = null;
 let api: TrackChangesAPI | null = null;
@@ -61,8 +63,9 @@ onMounted(() => {
     if (newDoc && collabStore.app && editorRef.value) {
       api = new TrackChangesAPI({
         doc: newDoc,
-        userId: collabStore.currentUserId,
-        presence: collabStore.app.presence
+        userId: userStore.activeUser?.id || 'unknown-user',
+        presence: collabStore.app.presence,
+        getUserColor: getUserColor
       })
 
       const state = EditorState.create({

@@ -30,14 +30,6 @@ export const useDocumentStore = defineStore('document', () => {
   const fileName = ref<string>('')
 
   /**
-   * Der reine Textinhalt des Dokuments.
-   * An dieser Stelle würde ein Texteditor-Framework (z.B. ProseMirror, TipTap)
-   * ansetzen, um einen reichhaltigeren Dokumentenzustand zu verwalten.
-   * Für eine einfache Demo ist ein String ausreichend.
-   */
-  const textContent = ref<string>('')
-
-  /**
    * Eine reaktive Map aller aktiven Vorschläge (Annotations) im Dokument.
    * Key: AnnotationId, Value: AdditionAnnotation
    */
@@ -64,14 +56,12 @@ export const useDocumentStore = defineStore('document', () => {
     // 2. State zurücksetzen, wenn kein Dokument geladen ist
     if (!newDoc) {
       fileName.value = ''
-      textContent.value = ''
       annotations.clear()
       return
     }
 
     // 3. State mit den Werten des neuen Dokuments initialisieren
     fileName.value = newDoc.fileName.toString()
-    textContent.value = newDoc.content.toString()
     annotations.clear()
     newDoc.content.getActiveAnnotations().forEach((item) => {
       annotations.set(item.id, item)
@@ -81,12 +71,6 @@ export const useDocumentStore = defineStore('document', () => {
     const onFileNameChange = () => {
       fileName.value = newDoc.fileName.toString()
     }
-    const onTextInsert = () => {
-      textContent.value = newDoc.content.toString()
-    }
-    const onTextDelete = () => {
-      textContent.value = newDoc.content.toString()
-    }
     const onAnnotationRemoved = (event: { annotation: Annotation }) => {
       console.log('Annotation removed')
       annotations.delete(event.annotation.id)
@@ -94,27 +78,11 @@ export const useDocumentStore = defineStore('document', () => {
     // Wir könnten auch auf FormatChange hören, um die Darstellung zu aktualisieren.
     listenerCleanups.push(
       newDoc.fileName.on('Any', onFileNameChange),
-      newDoc.content.on('Insert', onTextInsert),
-      newDoc.content.on('Delete', onTextDelete),
       newDoc.content.on('AnnotationAdded', (event) => {
         annotations.set(event.annotation.id, event.annotation)
       }),
       newDoc.content.on('AnnotationRemoved', onAnnotationRemoved),
     )
-  }
-
-  // --- SCHNITTSTELLE FÜR DEN TEXTEDITOR ---
-  // Diese Funktionen kapseln die Logik deiner Bibliothek und bieten eine
-  // einfache API für die UI-Komponenten.
-
-  function insertText(index: number, text: string, isAnnotation: boolean) {
-    if (!document.value) return
-    document.value.content.insert(index, text, isAnnotation)
-  }
-
-  function deleteText(index: number, count: number, isAnnotation: boolean) {
-    if (!document.value) return
-    document.value.content.delete(index, count, isAnnotation)
   }
 
   function acceptSuggestion(id: AnnotationId) {
@@ -142,11 +110,8 @@ export const useDocumentStore = defineStore('document', () => {
     document,
     isDocumentLoaded,
     fileName,
-    textContent,
     annotations,
     setDocument,
-    insertText,
-    deleteText,
     acceptSuggestion,
     declineSuggestion,
     addComment,

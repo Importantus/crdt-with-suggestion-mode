@@ -698,81 +698,22 @@ export class TrackChanges
    * @returns An array of active addition annotations.
    */
   public getActiveAnnotations(): AdditionAnnotation[] {
-    const annotationTraces = new Map<
-      AnnotationId,
-      {
-        annotation: AdditionAnnotation & { endingHere: boolean };
-        position: Position;
-      }[]
-    >();
+    const annotations = new Map<AnnotationId, AdditionAnnotation>();
 
-    for (const [_index, dataPoint, position] of this.annotationList.entries()) {
+    for (const [_index, dataPoint] of this.annotationList.entries()) {
       const allAnnotationsAtPosition = Array.from(dataPoint.values()).flat();
 
-      const deleteAnnotationsByUser = new Map<
-        string,
-        (AdditionAnnotation & { endingHere: boolean })[]
-      >();
-      const otherAnnotations: (AdditionAnnotation & { endingHere: boolean })[] =
-        [];
-
-      for (const s of allAnnotationsAtPosition) {
-        if (s.description === AnnotationDescription.DELETE_SUGGESTION) {
-          if (!deleteAnnotationsByUser.has(s.userId)) {
-            deleteAnnotationsByUser.set(s.userId, []);
-          }
-          deleteAnnotationsByUser.get(s.userId)!.push(s);
-        } else {
-          otherAnnotations.push(s);
-        }
-      }
-
-      const winningDeleteAnnotations: (AdditionAnnotation & {
-        endingHere: boolean;
-      })[] = [];
-      for (const userAnnotations of deleteAnnotationsByUser.values()) {
-        if (userAnnotations.length > 0) {
-          // Die 'wins'-Methode ermittelt den neuesten Vorschlag basierend auf Lamport-Zeitstempeln.
-          const winner = userAnnotations.reduce((a, b) =>
-            this.wins(a, b) ? a : b
-          );
-          winningDeleteAnnotations.push(winner);
-        }
-      }
-
-      const filteredAnnotations = [
-        ...otherAnnotations,
-        ...winningDeleteAnnotations,
-      ].filter((s) => s.action === AnnotationAction.ADDITION);
-
-      for (const s of filteredAnnotations) {
-        if (!annotationTraces.has(s.id)) {
-          annotationTraces.set(s.id, []);
-        }
-        annotationTraces.get(s.id)!.push({
-          annotation: s,
-          position,
-        });
+      for (const annotation of allAnnotationsAtPosition) {
+        if (
+          annotation.action === AnnotationAction.ADDITION &&
+          !annotations.has(annotation.id)
+        ) {
+          annotations.set(annotation.id, annotation);
       }
     }
-
-    const finalAnnotations: Annotation[] = [];
-    for (const traces of annotationTraces.values()) {
-      const startPosition = traces[0].position;
-      const definitiveAnnotationData = traces[traces.length - 1].annotation;
-      const endTrace = traces.find((trace) => trace.annotation.endingHere);
-
-      const reconstructedAnnotation: AdditionAnnotation = {
-        ...definitiveAnnotationData,
-        startPosition: startPosition,
-        endPosition: endTrace ? endTrace.position : null,
-      };
-
-      delete (reconstructedAnnotation as any).endingHere;
-      finalAnnotations.push(reconstructedAnnotation);
     }
 
-    return finalAnnotations as AdditionAnnotation[];
+    return Array.from(annotations.values());
   }
 
   /**

@@ -125,21 +125,42 @@ export const trackChangesDecorations = ViewPlugin.fromClass(
       for (const item of this.activeAnnotations.values()) {
         let startIndex = item.startPos
           ? content.indexOfPosition(item.startPos, "left")
-          : 0;
-        if (startIndex === -1) continue; // Skip if position no longer valid
+          : 0; // If no position found (e.g. -1), it later defaults to 0 because +1 is added for open ranges
 
         let endIndex = item.endPos
           ? content.indexOfPosition(item.endPos, "right")
           : content.length;
-        if (endIndex === -1) continue;
+        if (endIndex === -1) {
+          endIndex = content.length; // Fallback to end of document if position not found
+        }
+
+        let startCheckIndex = item.startPos
+          ? content.indexOfPosition(item.startPos, "right")
+          : 0;
+
+        let endCheckIndex = item.endPos
+          ? content.indexOfPosition(item.endPos, "left")
+          : content.length;
+
+        if (startCheckIndex > endCheckIndex) {
+          continue; // Skip if start position is after end position
+        }
 
         // Extend range if the annotation end is closed
-        if (item.annotation.endClosed && endIndex < content.length) {
+        if (
+          item.annotation.endClosed &&
+          endIndex < content.length &&
+          endCheckIndex === endIndex // Only extend if the end is closed and the real end position is not already deleted
+        ) {
           endIndex += 1;
         }
 
         // Reduce range if the start is open
-        if (item.annotation.startClosed === false && item.startPos) {
+        if (
+          (item.annotation.startClosed === false && item.startPos) ||
+          (item.annotation.startClosed !== false &&
+            startCheckIndex !== startIndex) // If the start is closed and the real start position is already deleted, we also need to reduce the range
+        ) {
           startIndex += 1;
         }
 

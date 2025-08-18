@@ -8,8 +8,8 @@ export interface User {
 }
 
 export const users: User[] = [
-  { id: 'user1', name: 'Alice', color: '#02A800' },
-  { id: 'user2', name: 'Bob', color: '#03C2FE' },
+  { id: 'user1', name: 'Alice', color: '#3BA5A5' },
+  { id: 'user2', name: 'Bob', color: '#D17A22' },
 ]
 
 export function getUserColor(userId: string, transparency: number = 1): string {

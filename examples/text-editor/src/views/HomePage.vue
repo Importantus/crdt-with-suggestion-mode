@@ -185,7 +185,7 @@ watch(sortedAnnotations, () => {
           </div>
           <div class="ml-2">Vorschlagen</div>
         </label>
-        <label class="flex items-center cursor-pointer relative bg-gray-200 rounded-full p-2 px-4">
+        <!-- <label class="flex items-center cursor-pointer relative bg-gray-200 rounded-full p-2 px-4">
           <div class="flex items-center relative">
             <input type="checkbox" v-model="collabStore.connection"
               class="peer h-5 w-5 bg-gray-100 cursor-pointer transition-all appearance-none rounded border border-slate-300 checked:bg-gray-700 checked:border-gray-700"
@@ -201,7 +201,7 @@ watch(sortedAnnotations, () => {
             </span>
           </div>
           <div class="ml-2">Online</div>
-        </label>
+        </label>  -->
         <div @click="() => {
           collabStore.leaveDocument();
           userStore.logout();

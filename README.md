@@ -1,8 +1,8 @@
 # Review Mode for Raw Text Editing
 
-This monorepo contains libraries and a research prototype for building real-time collaborative applications featuring "Review Mode" functionality, specifically designed for raw text formats (such as Markdown, LaTeX, or source code). The core logic is implemented as a custom CRDT built on top of the Collabs framework.
+This monorepo contains libraries and a prototype for building real-time collaborative applications featuring "Review Mode" functionality, specifically designed for raw text formats (such as Markdown, LaTeX, or source code). The core logic is implemented as a custom CRDT built on top of the Collabs framework.
 
-This project is an academic prototype developed as part of my bachelor's thesis. It serves as a proof of concept for the proposed CRDT architecture for handling review mode in raw text.
+This project is a prototype developed as part of my bachelor's thesis. It serves as a proof of concept for the proposed CRDT architecture for handling review mode in raw text.
 While functional for demonstration purposes, it is not production-ready and has not been extensively tested. Handling of some concurrent edge cases may not yet align with intuitive user expectations. Feedback, bug reports, and contributions to improve robustness are encouraged!
 
 ## What is "Review Mode"?
